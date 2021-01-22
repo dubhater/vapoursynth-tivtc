@@ -23,11 +23,11 @@
 **   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 */
 
+#include <string>
+#include <vector>
 #include <math.h>
-#define TFMPP_INCLUDED
-#ifndef TFM_INCLUDED
-#include "TFM.h"
-#endif
+#include <VapourSynth.h>
+#include "cpufeatures.h"
 #ifdef VERSION
 #undef VERSION
 #endif
@@ -70,91 +70,87 @@ void cubicDeintMask_C(const pixel_t* srcp, pixel_t* dstp,
   const uint8_t* maskp, int src_pitch, int dst_pitch, int msk_pitch,
   int width, int height);
 
-class TFMPP : public GenericVideoFilter
+class TFMPP
 {
 private:
+    const VSAPI *vsapi;
+    VSNodeRef *child;
 
-  bool has_at_least_v8;
-  int cpuFlags;
+  CPUFeatures cpuFlags;
 
-  char buf[512];
   int PP, mthresh;
-  const char* ovr;
+  std::string ovr;
   bool display;
-  PClip clip2;
+  VSNodeRef *clip2;
   bool usehints;
   int opt;
   bool uC2; // use clip2
   int PP_origSaved;
   int mthresh_origSaved;
   int nfrms;
-  int setArraySize;
-  int* setArray;
-  PlanarFrame *mmask;
+  std::vector<int> setArray;
+  VSFrameRef *mmask;
 
-  void buildMotionMask(PVideoFrame &prv, PVideoFrame &src, PVideoFrame &nxt,
-    PlanarFrame *mask, int use, const VideoInfo& vi, IScriptEnvironment *env);
+  void buildMotionMask(const VSFrameRef *prv, const VSFrameRef *src, const VSFrameRef *nxt,
+    VSFrameRef *mask, int use) const;
   template<typename pixel_t>
-  void buildMotionMask_core(PVideoFrame& prv, PVideoFrame& src, PVideoFrame& nxt,
-    PlanarFrame* mask, int use, const VideoInfo& vi, IScriptEnvironment* env);
-  void maskClip2(PVideoFrame &src, PVideoFrame &deint, PlanarFrame *mask,
+  void buildMotionMask_core(const VSFrameRef *prv, const VSFrameRef *src, const VSFrameRef *nxt,
+    VSFrameRef* mask, int use) const;
+  void maskClip2(const VSFrameRef *src, const VSFrameRef *deint, const VSFrameRef *mask,
+    VSFrameRef *dst) const;
 
-    PVideoFrame &dst, const VideoInfo& vi, IScriptEnvironment *env);
-
-  void putHint(const VideoInfo& vi, PVideoFrame& dst, int field, unsigned int hint);
-  template<typename pixel_t>
-  void putHint_core(PVideoFrame &dst, int field, unsigned int hint);
-  bool getHint(const VideoInfo &vi, PVideoFrame& src, int& field, bool& combed, unsigned int& hint);
-  template<typename pixel_t>
-  bool getHint_core(PVideoFrame& src, int& field, bool& combed, unsigned int& hint);
+//  void putHint(VSFrameRef *dst, int field, unsigned int hint);
+//  template<typename pixel_t>
+//  void putHint_core(VSFrameRef *dst, int field, unsigned int hint);
+  void getProperties(const VSFrameRef *src, int& field, bool& combed) const;
+//  template<typename pixel_t>
+//  bool getHint_core(const VSFrameRef *src, int& field, bool& combed, unsigned int& hint);
 
   void getSetOvr(int n);
 
-  void denoiseYUY2(PlanarFrame *mask);
-  void denoisePlanar(PlanarFrame *mask);
+//  void denoiseYUY2(VSFrameRef *mask);
+  void denoisePlanar(VSFrameRef *mask) const;
 
-  void linkYUY2(PlanarFrame *mask);
+//  void linkYUY2(VSFrameRef *mask);
   template<int planarType>
-  void linkPlanar(PlanarFrame *mask);
+  void linkPlanar(VSFrameRef *mask) const;
 
-  void destroyHint(const VideoInfo &vi, PVideoFrame &dst, unsigned int hint);
+//  void destroyHint(VSFrameRef *dst, unsigned int hint);
+//  template<typename pixel_t>
+//  void destroyHint_core(VSFrameRef *dst, unsigned int hint);
+
+  void BlendDeint(const VSFrameRef *src, const VSFrameRef *mask, VSFrameRef *dst,
+    bool nomask) const;
   template<typename pixel_t>
-  void destroyHint_core(PVideoFrame& dst, unsigned int hint);
+  void BlendDeint_core(const VSFrameRef *src, const VSFrameRef* mask, VSFrameRef *dst,
+    bool nomask) const;
 
-  void BlendDeint(PVideoFrame& src, PlanarFrame* mask, PVideoFrame& dst,
-    bool nomask, const VideoInfo& vi, IScriptEnvironment* env);
-  template<typename pixel_t>
-  void BlendDeint_core(PVideoFrame& src, PlanarFrame* mask, PVideoFrame& dst,
-    bool nomask, const VideoInfo& vi, IScriptEnvironment* env);
-
-  void CubicDeint(PVideoFrame &src, PlanarFrame *mask, PVideoFrame &dst, bool nomask,
-    int field, const VideoInfo &vi, IScriptEnvironment *env);
+  void CubicDeint(const VSFrameRef *src, const VSFrameRef *mask, VSFrameRef *dst, bool nomask,
+    int field) const;
   template<typename pixel_t, int bits_per_pixel>
-  void CubicDeint_core(PVideoFrame& src, PlanarFrame* mask, PVideoFrame& dst, bool nomask,
-    int field, const VideoInfo& vi, IScriptEnvironment* env);
+  void CubicDeint_core(const VSFrameRef *src, const VSFrameRef* mask, VSFrameRef *dst, bool nomask,
+    int field) const;
 
-  void elaDeint(PVideoFrame &dst, PlanarFrame *mask, PVideoFrame &src, bool nomask, int field, const VideoInfo &vi);
+  void elaDeint(VSFrameRef *dst, const VSFrameRef *mask, const VSFrameRef *src, bool nomask, int field) const;
   // not the same as in tdeinterlace.
   template<typename pixel_t, int bits_per_pixel>
-  void elaDeintPlanar(PVideoFrame &dst, PlanarFrame *mask, PVideoFrame &src, bool nomask, int field, const VideoInfo &vi);
-  void elaDeintYUY2(PVideoFrame &dst, PlanarFrame *mask, PVideoFrame &src, bool nomask, int field);
+  void elaDeintPlanar(VSFrameRef *dst, const VSFrameRef *mask, const VSFrameRef *src, bool nomask, int field) const;
+//  void elaDeintYUY2(VSFrameRef *dst, const VSFrameRef *mask, const VSFrameRef *src, bool nomask, int field);
 
-  void copyField(PVideoFrame &dst, PVideoFrame &src, IScriptEnvironment *env, const VideoInfo &vi, int field);
+  void copyField(VSFrameRef *dst, const VSFrameRef *src, int field) const;
   void buildMotionMask1_SSE2(const uint8_t *srcp1, const uint8_t *srcp2,
-    uint8_t *dstp, int s1_pitch, int s2_pitch, int dst_pitch, int width, int height, long cpu);
+    uint8_t *dstp, int s1_pitch, int s2_pitch, int dst_pitch, int width, int height, const CPUFeatures *cpu) const;
   void buildMotionMask2_SSE2(const uint8_t *srcp1, const uint8_t *srcp2,
     const uint8_t *srcp3, uint8_t *dstp, int s1_pitch, int s2_pitch,
-    int s3_pitch, int dst_pitch, int width, int height, long cpu);
+    int s3_pitch, int dst_pitch, int width, int height, const CPUFeatures *cpu) const;
 
-  void writeDisplay(PVideoFrame& dst, const VideoInfo& vi, int n, int field);
+  void writeDisplay(VSFrameRef *dst, int n, int field) const;
 
 public:
-  PVideoFrame __stdcall GetFrame(int n, IScriptEnvironment* env) override;
-  TFMPP(PClip _child, int _PP, int _mthresh, const char* _ovr, bool _display, PClip _clip2,
-    bool _usehints, int _opt, IScriptEnvironment* env);
-  ~TFMPP();
+  const VSVideoInfo *vi;
 
-  int __stdcall SetCacheHints(int cachehints, int frame_range) override {
-    return cachehints == CACHE_GET_MTMODE ? MT_SERIALIZED : 0;
-  }
+  const VSFrameRef *GetFrame(int n, int activationReason, VSFrameContext *frameCtx, VSCore *core);
+  TFMPP(VSNodeRef *_child, int _PP, int _mthresh, const char* _ovr, bool _display, VSNodeRef *_clip2,
+    bool _usehints, int _opt, const VSAPI *_vsapi, VSCore *core);
+  ~TFMPP();
 };

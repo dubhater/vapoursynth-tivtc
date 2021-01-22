@@ -218,9 +218,9 @@ void buildABSDiffMask_c(const uint8_t* prvp, const uint8_t* nxtp,
 
 template<typename pixel_t>
 void do_buildABSDiffMask(const uint8_t* prvp, const uint8_t* nxtp, uint8_t* tbuffer,
-  int prv_pitch, int nxt_pitch, int tpitch, int width, int height, bool YUY2_LumaOnly, int cpuFlags)
+  int prv_pitch, int nxt_pitch, int tpitch, int width, int height, bool YUY2_LumaOnly, const CPUFeatures *cpuFlags)
 {
-  if (cpuFlags & CPUF_SSE2 && width >= 8)
+  if (cpuFlags->sse2 && width >= 8)
   {
     const int rowsize = width * sizeof(pixel_t);
     const int rowsizemod8 = rowsize / 8 * 8;
@@ -252,16 +252,16 @@ void do_buildABSDiffMask(const uint8_t* prvp, const uint8_t* nxtp, uint8_t* tbuf
 }
 // instantiate
 template void do_buildABSDiffMask<uint8_t>(const uint8_t* prvp, const uint8_t* nxtp, uint8_t* tbuffer,
-  int prv_pitch, int nxt_pitch, int tpitch, int width, int height, bool YUY2_LumaOnly, int cpuFlags);
+  int prv_pitch, int nxt_pitch, int tpitch, int width, int height, bool YUY2_LumaOnly, const CPUFeatures *cpuFlags);
 template void do_buildABSDiffMask<uint16_t>(const uint8_t* prvp, const uint8_t* nxtp, uint8_t* tbuffer,
-  int prv_pitch, int nxt_pitch, int tpitch, int width, int height, bool YUY2_LumaOnly, int cpuFlags);
+  int prv_pitch, int nxt_pitch, int tpitch, int width, int height, bool YUY2_LumaOnly, const CPUFeatures *cpuFlags);
 
 
 template<typename pixel_t>
 void do_buildABSDiffMask2(const uint8_t* prvp, const uint8_t* nxtp, uint8_t* dstp,
-  int prv_pitch, int nxt_pitch, int dst_pitch, int width, int height, bool YUY2_LumaOnly, int cpuFlags, int bits_per_pixel)
+  int prv_pitch, int nxt_pitch, int dst_pitch, int width, int height, bool YUY2_LumaOnly, const CPUFeatures *cpuFlags, int bits_per_pixel)
 {
-  if ((cpuFlags & CPUF_SSE2) && width >= 8) // yes, width and not row_size
+  if (cpuFlags->sse2 && width >= 8) // yes, width and not row_size
   {
     int mod8Width = width / 8 * 8;
     if constexpr(sizeof(pixel_t) == 8)
@@ -290,9 +290,9 @@ void do_buildABSDiffMask2(const uint8_t* prvp, const uint8_t* nxtp, uint8_t* dst
 }
 // instantiate
 template void do_buildABSDiffMask2<uint8_t>(const uint8_t* prvp, const uint8_t* nxtp, uint8_t* dstp,
-  int prv_pitch, int nxt_pitch, int dst_pitch, int width, int height, bool YUY2_LumaOnly, int cpuFlags, int bits_per_pixel);
+  int prv_pitch, int nxt_pitch, int dst_pitch, int width, int height, bool YUY2_LumaOnly, const CPUFeatures *cpuFlags, int bits_per_pixel);
 template void do_buildABSDiffMask2<uint16_t>(const uint8_t* prvp, const uint8_t* nxtp, uint8_t* dstp,
-  int prv_pitch, int nxt_pitch, int dst_pitch, int width, int height, bool YUY2_LumaOnly, int cpuFlags, int bits_per_pixel);
+  int prv_pitch, int nxt_pitch, int dst_pitch, int width, int height, bool YUY2_LumaOnly, const CPUFeatures *cpuFlags, int bits_per_pixel);
 
 // Finally this is common for TFM and TDeint, planar and YUY2 (luma, luma+chroma))
 // This C code replaces some thousand line of copy pasted original inline asm lines
@@ -374,7 +374,7 @@ static AVS_FORCEINLINE void AnalyzeOnePixel(uint8_t* dstp,
   }
 
   if (y != 2) {
-    for (int esi = startx; esi < stopx; esi += DIST) {
+    for (esi = startx; esi < stopx; esi += DIST) {
       if (dppp[esi] > Const19) {
         upper2 = 1;
         break;
@@ -382,7 +382,7 @@ static AVS_FORCEINLINE void AnalyzeOnePixel(uint8_t* dstp,
     }
   }
 
-  for (int esi = startx; esi < stopx; esi += DIST)
+  for (esi = startx; esi < stopx; esi += DIST)
   {
     if (dpp[esi] > Const19)
       upper = 1;
@@ -393,7 +393,7 @@ static AVS_FORCEINLINE void AnalyzeOnePixel(uint8_t* dstp,
   }
 
   if (y != Height - 4) {
-    for (int esi = startx; esi < stopx; esi += DIST)
+    for (esi = startx; esi < stopx; esi += DIST)
     {
       if (dpnn[esi] > Const19) {
         lower2 = 1;
@@ -1247,16 +1247,16 @@ void compute_sum_16x8_sse2_luma(const uint8_t *srcp, int pitch, int &sum)
   sum = _mm_cvtsi128_si32(tmpsum);
 }
 
-void copyFrame(PVideoFrame& dst, PVideoFrame& src, const VideoInfo& vi, IScriptEnvironment* env)
+void copyFrame(VSFrameRef *dst, const VSFrameRef *src, const VSAPI *vsapi)
 {
-  const int planes[3] = { PLANAR_Y, PLANAR_U, PLANAR_V };
   // bit depth independent
-  const int np = vi.IsYUY2() || vi.IsY() ? 1 : 3;
+    const VSFormat *format = vsapi->getFrameFormat(src);
+  const int np = format->numPlanes;
   for (int b = 0; b < np; ++b)
   {
-    const int plane = planes[b];
-    env->BitBlt(dst->GetWritePtr(plane), dst->GetPitch(plane), src->GetReadPtr(plane),
-      src->GetPitch(plane), src->GetRowSize(plane), src->GetHeight(plane));
+    const int plane = b;
+    vs_bitblt(vsapi->getWritePtr(dst, plane), vsapi->getStride(dst, plane), vsapi->getReadPtr(src, plane),
+      vsapi->getStride(src, plane), vsapi->getFrameWidth(src, plane) * format->bytesPerSample, vsapi->getFrameHeight(src, plane));
   }
 }
 
@@ -1265,7 +1265,7 @@ template<typename pixel_t>
 void blend_5050_SSE2(uint8_t* dstp, const uint8_t* srcp1, const uint8_t* srcp2, int width, int height, int dst_pitch, int src1_pitch, int src2_pitch)
 {
   while (height--) {
-    for (int x = 0; x < width * sizeof(pixel_t); x += 16) {
+    for (int x = 0; x < width * (int)sizeof(pixel_t); x += 16) {
       auto src1 = _mm_load_si128(reinterpret_cast<const __m128i*>(srcp1 + x));
       auto src2 = _mm_load_si128(reinterpret_cast<const __m128i*>(srcp2 + x));
       if constexpr (sizeof(pixel_t) == 1)

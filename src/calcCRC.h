@@ -23,7 +23,8 @@
 **   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 */
 
-#include <windows.h>
-#include "internal.h"
+//#include <windows.h>
+//#include "internal.h"
+#include <VapourSynth.h>
 
-void calcCRC(PClip hclip, int stop, unsigned int& crc, IScriptEnvironment* env);
+void calcCRC(VSNodeRef *hclip, int stop, unsigned int& crc, const VSAPI *vsapi);

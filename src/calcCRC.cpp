@@ -23,7 +23,8 @@
 **   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 */
 
-#include "internal.h"
+//#include "internal.h"
+#include "calcCRC.h"
 
 static const unsigned int Crc32Table[256] =
 {
@@ -93,22 +94,22 @@ static const unsigned int Crc32Table[256] =
   0xB40BBE37, 0xC30C8EA1, 0x5A05DF1B, 0x2D02EF8D,
 };
 
-void calcCRC(PClip hclip, int stop, unsigned int &crc, IScriptEnvironment *env)
+void calcCRC(VSNodeRef *hclip, int stop, unsigned int &crc, const VSAPI *vsapi)
 {
   crc = 0xFFFFFFFF;
-  PVideoFrame src;
+  const VSFrameRef *src;
   const unsigned int *ptrCrcTable = Crc32Table;
   const uint8_t *buffer;
   int width, height, pitch, modulo, x;
-  const VideoInfo &vi2 = hclip->GetVideoInfo();
-  if (stop > vi2.num_frames) stop = vi2.num_frames;
+  const VSVideoInfo *vi2 = vsapi->getVideoInfo(hclip);
+  if (stop > vi2->numFrames) stop = vi2->numFrames;
   for (x = 0; x < stop; ++x)
   {
-    src = hclip->GetFrame(x, env);
-    buffer = src->GetReadPtr(PLANAR_Y);
-    width = src->GetRowSize(PLANAR_Y);
-    pitch = src->GetPitch(PLANAR_Y);
-    height = src->GetHeight(PLANAR_Y);
+    src = vsapi->getFrame(x, hclip, nullptr, 0);
+    buffer = vsapi->getReadPtr(src, 0);
+    width = vsapi->getFrameWidth(src, 0) * vsapi->getFrameFormat(src)->bytesPerSample;
+    pitch = vsapi->getStride(src, 0);
+    height = vsapi->getFrameHeight(src, 0);
     modulo = pitch - width;
     while (height--) {
       int size = width;
@@ -117,5 +118,6 @@ void calcCRC(PClip hclip, int stop, unsigned int &crc, IScriptEnvironment *env)
       buffer += modulo;
     }
     //crc = crc ^ ~0U;
+    vsapi->freeFrame(src);
   }
 }

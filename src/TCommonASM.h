@@ -22,10 +22,13 @@
 #ifndef __TCOMMONASM_H__
 #define __TCOMMONASM_H__
 
+#include <stdint.h>
 #include "internal.h"
 #include <xmmintrin.h>
 #include <emmintrin.h>
 #include <algorithm>
+#include <VSHelper.h>
+#include "cpufeatures.h"
 
 template<int bits_per_pixel>
 AVS_FORCEINLINE int cubicInt(int p1, int p2, int p3, int p4)
@@ -81,7 +84,7 @@ void buildABSDiffMask_c(const uint8_t* prvp, const uint8_t* nxtp,
 
 template<typename pixel_t>
 void do_buildABSDiffMask(const uint8_t* prvp, const uint8_t* nxtp, uint8_t* tbuffer,
-  int prv_pitch, int nxt_pitch, int tpitch, int width, int height, bool YUY2_LumaOnly, int cpuFlags);
+  int prv_pitch, int nxt_pitch, int tpitch, int width, int height, bool YUY2_LumaOnly, const CPUFeatures *cpuFlags);
 
 template<typename pixel_t, int bits_per_pixel>
 void AnalyzeDiffMask_Planar(uint8_t* dstp, int dst_pitch, uint8_t* tbuffer, int tpitch, int Width, int Height);
@@ -100,7 +103,7 @@ void buildABSDiffMask2_c(const uint8_t* prvp, const uint8_t* nxtp,
 
 template<typename pixel_t>
 void do_buildABSDiffMask2(const uint8_t* prvp, const uint8_t* nxtp, uint8_t* dstp,
-  int prv_pitch, int nxt_pitch, int dst_pitch, int width, int height, bool YUY2_LumaOnly, int cpuFlags, int bits_per_pixel);
+  int prv_pitch, int nxt_pitch, int dst_pitch, int width, int height, bool YUY2_LumaOnly, const CPUFeatures *cpuFlags, int bits_per_pixel);
 
 
 template<int blockSizeY>
@@ -109,7 +112,7 @@ void compute_sum_8xN_sse2(const uint8_t *srcp, int pitch, int &sum);
 void compute_sum_16x8_sse2_luma(const uint8_t *srcp, int pitch, int &sum);
 
 // fixme: put non-asm utility functions into different file
-void copyFrame(PVideoFrame& dst, PVideoFrame& src, const VideoInfo& vi, IScriptEnvironment* env);
+void copyFrame(VSFrameRef *dst, const VSFrameRef *src, const VSAPI *vsapi);
 
 template<typename pixel_t>
 void blend_5050_SSE2(uint8_t* dstp, const uint8_t* srcp1, const uint8_t* srcp2, int width, int height, int dst_pitch, int src1_pitch, int src2_pitch);
