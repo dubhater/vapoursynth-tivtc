@@ -33,6 +33,8 @@
 #define _strnicmp strncasecmp
 #define _fullpath(absolute, relative, max) realpath((relative), (absolute))
 #define MAX_PATH PATH_MAX
+#else
+#include <windows.h>
 #endif
 #include <memory>
 #include <vector>
@@ -42,35 +44,6 @@
 #include "internal.h"
 #include "cpufeatures.h"
 
-constexpr int ISP = 0x00000000; // p
-constexpr int ISC = 0x00000001; // c
-constexpr int ISN = 0x00000002; // n
-constexpr int ISB = 0x00000003; // b
-constexpr int ISU = 0x00000004; // u
-constexpr int ISDB = 0x00000005; // l = (deinterlaced c bottom field)
-constexpr int ISDT = 0x00000006; // h = (deinterlaced c top field)
-
-#define MTC(n) n == 0 ? 'p' : n == 1 ? 'c' : n == 2 ? 'n' : n == 3 ? 'b' : n == 4 ? 'u' : \
-			   n == 5 ? 'l' : n == 6 ? 'h' : 'x'
-
-constexpr int TOP_FIELD = 0x00000008;
-constexpr int COMBED = 0x00000010;
-constexpr int D2VFILM = 0x00000020;
-
-constexpr uint32_t MAGIC_NUMBER = 0xdeadfeed;
-constexpr uint32_t MAGIC_NUMBER_2 = 0xdeadbeef;
-
-constexpr int FILE_COMBED = 0x00000030;
-constexpr int FILE_NOTCOMBED = 0x00000020;
-constexpr int FILE_ENTRY = 0x00000080;
-constexpr int FILE_D2V = 0x00000008;
-constexpr int D2VARRAY_DUP_MASK = 0x03;
-constexpr int D2VARRAY_MATCH_MASK = 0x3C;
-
-#ifdef VERSION
-#undef VERSION
-#endif
-#define VERSION "v1.0.7"
 
 template<int planarType>
 void FillCombedPlanarUpdateCmaskByUV(VSFrameRef* cmask, const VSAPI *vsapi);
@@ -205,7 +178,7 @@ private:
     int blockN, int xblocks, bool d2vmatch, int *mics, const VSFrameRef *prv,
     const VSFrameRef *src, const VSFrameRef *nxt);
 
-  void putProperties(VSFrameRef *dst, int match, int combed, bool d2vfilm, const int mics[5]) const;
+  void putFrameProperties(VSFrameRef *dst, int match, int combed, bool d2vfilm, const int mics[5]) const;
 //  template<typename pixel_t>
 //  void putHint_core(VSFrameRef *dst, int match, int combed, bool d2vfilm);
 

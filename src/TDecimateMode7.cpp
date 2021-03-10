@@ -26,10 +26,12 @@
 #include "TDecimate.h"
 #include <inttypes.h>
 #include <algorithm>
-#include "info.h"
 
-PVideoFrame TDecimate::GetFrameMode7(int n, IScriptEnvironment *env, const VideoInfo &vi)
+const VSFrameRef * TDecimate::GetFrameMode7(int n, int activationReason, void **frameData, VSFrameContext *frameCtx, VSCore *core)
 {
+    if (activationReason != arInitial && activationReason != arAllFramesReady)
+        return nullptr;
+
   double ratio = fps / rate;
   int prev_f = int(double(n - 1)*ratio + 1.0);
   if (prev_f < 0) prev_f = 0;
@@ -41,51 +43,70 @@ PVideoFrame TDecimate::GetFrameMode7(int n, IScriptEnvironment *env, const Video
   if (next_f > nfrms) next_f = nfrms;
   int curr_real = mode2_decA[n];
   int chosen = 0;
+
   if (curr_real == -20) {
     int prev_real = n == 0 ? -20 : mode2_decA[n - 1];
     if (prev_real != -20) prev_f = prev_real;
     bool rup = double(n) * ratio - double(curr1_f) >= 0.5 ? true : false;
+    bool requesting_frames = false;
     for (int i = std::max(prev_f - 3, 1); i <= std::min(next_f + 2, nfrms); ++i)
     {
       if (metricsOutArray[i << 1] == UINT64_MAX)
       {
-        if (metricsArray != NULL && metricsArray[i << 1] != UINT64_MAX)
+        if (metricsArray.size() && metricsArray[i << 1] != UINT64_MAX)
           metricsOutArray[i << 1] = metricsArray[i << 1];
         else
         {
-          int blockNI, blocksI;
-          uint64_t metricF;
-          PVideoFrame frame1 = child->GetFrame(i - 1, env);
-          PVideoFrame frame2 = child->GetFrame(i, env);
-          metricsOutArray[i << 1] =
-            calcMetric(frame1, frame2,
-              vi, blockNI, blocksI, metricF, env, false);
+            if (activationReason == arInitial) {
+                vsapi->requestFrameFilter(i - 1, child, frameCtx);
+                vsapi->requestFrameFilter(i, child, frameCtx);
+                requesting_frames = true;
+            } else {
+              int blockNI, blocksI;
+              uint64_t metricF;
+              const VSFrameRef *frame1 = vsapi->getFrameFilter(i - 1, child, frameCtx);
+              const VSFrameRef *frame2 = vsapi->getFrameFilter(i, child, frameCtx);
+              metricsOutArray[i << 1] =
+                calcMetric(frame1, frame2,
+                  vi_child, blockNI, blocksI, metricF, false, core);
+              vsapi->freeFrame(frame1);
+              vsapi->freeFrame(frame2);
+            }
         }
       }
     }
-    if (same_group(curr1_f, curr2_f, env))
-    {
-      if (next_f - curr2_f > 1 && similar_group(prev_f, curr2_f, env) &&
-        diff_group(next_f, next_f + 1, env) && diff_group(curr2_f, curr2_f + 1, env))
-        chosen = 4;
-      else chosen = 2;
+    if (requesting_frames)
+        return nullptr;
+
+    try {
+        if (same_group(curr1_f, curr2_f))
+        {
+          if (next_f - curr2_f > 1 && similar_group(prev_f, curr2_f) &&
+            diff_group(next_f, next_f + 1) && diff_group(curr2_f, curr2_f + 1))
+            chosen = 4;
+          else chosen = 2;
+        }
+        else if (same_group(prev_f, curr1_f)) chosen = 1;
+        else if (similar_group(prev_f, curr1_f))
+        {
+          if (similar_group(curr1_f, curr2_f) && !same_group(curr2_f, next_f))
+            chosen = 3;
+          else if (diff_group(curr1_f, curr2_f))
+            chosen = 1;
+        }
+        else if (diff_group(prev_f, curr1_f))
+        {
+          if (diff_group(curr2_f, next_f)) chosen = 3;
+          else if (diff_group(curr1_f, curr2_f) && same_group(curr1_f - 1, curr1_f) &&
+            same_group(curr2_f, next_f) && diff_group(next_f, next_f + 1) &&
+            curr1_f - prev_f == 2 && diff_group(prev_f - 1, prev_f))
+            chosen = 1;
+        }
+    } catch (const TIVTCError &e) {
+        vsapi->setFilterError(e.what(), frameCtx);
+        return nullptr;
     }
-    else if (same_group(prev_f, curr1_f, env)) chosen = 1;
-    else if (similar_group(prev_f, curr1_f, env))
-    {
-      if (similar_group(curr1_f, curr2_f, env) && !same_group(curr2_f, next_f, env))
-        chosen = 3;
-      else if (diff_group(curr1_f, curr2_f, env))
-        chosen = 1;
-    }
-    else if (diff_group(prev_f, curr1_f, env))
-    {
-      if (diff_group(curr2_f, next_f, env)) chosen = 3;
-      else if (diff_group(curr1_f, curr2_f, env) && same_group(curr1_f - 1, curr1_f, env) &&
-        same_group(curr2_f, next_f, env) && diff_group(next_f, next_f + 1, env) &&
-        curr1_f - prev_f == 2 && diff_group(prev_f - 1, prev_f, env))
-        chosen = 1;
-    }
+
     if (chosen == 4) mode2_decA[n] = curr2_f + 1;
     else if (chosen >= 2) // either
     {
@@ -100,63 +121,81 @@ PVideoFrame TDecimate::GetFrameMode7(int n, IScriptEnvironment *env, const Video
   }
 
   int ret = mode2_decA[n];
-  if (ret < 0 || ret > nfrms)
-    env->ThrowError("TDecimate:  mode 7 internal error!");
-  if (debug)
-  {
-    sprintf(buf, "TDecimate:  ------------------------------------------\n");
-    OutputDebugString(buf);
-    sprintf(buf, "TDecimate:  inframe = %d  useframe = %d  chosen = %d\n", n, ret, chosen);
-    OutputDebugString(buf);
-    sprintf(buf, "TDecimate:  prev = %d  curr1 = %d  curr2 = %d  next = %d\n", prev_f,
-      curr1_f, curr2_f, next_f);
-    OutputDebugString(buf);
-    for (int i = std::max(0, ret - 3); i <= std::min(ret + 3, nfrms); ++i)
-    {
-      sprintf(buf, "TDecimate:  %d:  %3.2f  %" PRIu64 "%s%s\n", i, double(metricsOutArray[i << 1])*100.0 / double(MAX_DIFF),
-        metricsOutArray[i << 1], metricsOutArray[i << 1] < same_thresh ? "  (D)" :
-        metricsOutArray[i << 1] > diff_thresh ? "  (N)" :
-        aLUT[i] == 2 ? "  (N)" : aLUT[i] == 1 ? "  (S)" :
-        aLUT[i] == 0 ? "  (D)" : "", wasChosen(i, n) ? "  *" : "");
-      OutputDebugString(buf);
-    }
+  if (ret < 0 || ret > nfrms) {
+      vsapi->setFilterError("TDecimate:  mode 7 internal error! Tried to request a frame that doesn't exist.", frameCtx);
+      return nullptr;
   }
 
-  const VideoInfo vi2 = (!useclip2) ? child->GetVideoInfo() : clip2->GetVideoInfo();
+//  if (debug)
+//  {
+//    sprintf(buf, "TDecimate:  ------------------------------------------\n");
+//    OutputDebugString(buf);
+//    sprintf(buf, "TDecimate:  inframe = %d  useframe = %d  chosen = %d\n", n, ret, chosen);
+//    OutputDebugString(buf);
+//    sprintf(buf, "TDecimate:  prev = %d  curr1 = %d  curr2 = %d  next = %d\n", prev_f,
+//      curr1_f, curr2_f, next_f);
+//    OutputDebugString(buf);
+//    for (int i = std::max(0, ret - 3); i <= std::min(ret + 3, nfrms); ++i)
+//    {
+//      sprintf(buf, "TDecimate:  %d:  %3.2f  %" PRIu64 "%s%s\n", i, double(metricsOutArray[i << 1])*100.0 / double(MAX_DIFF),
+//        metricsOutArray[i << 1], metricsOutArray[i << 1] < same_thresh ? "  (D)" :
+//        metricsOutArray[i << 1] > diff_thresh ? "  (N)" :
+//        aLUT[i] == 2 ? "  (N)" : aLUT[i] == 1 ? "  (S)" :
+//        aLUT[i] == 0 ? "  (D)" : "", wasChosen(i, n) ? "  *" : "");
+//      OutputDebugString(buf);
+//    }
+//  }
+
+  enum {
+      RetFrameIsReady = 69,
+  };
+
+  if (activationReason == arInitial || (activationReason == arAllFramesReady && (intptr_t)*frameData != RetFrameIsReady)) {
+      vsapi->requestFrameFilter(ret, clip2, frameCtx);
+      *frameData = (void *)RetFrameIsReady;
+      return nullptr;
+  }
+
+  const VSFrameRef *src = vsapi->getFrameFilter(ret, clip2, frameCtx);
 
   if (display)
   {
-    PVideoFrame dst;
-    if (!useclip2) dst = child->GetFrame(ret, env);
-    else dst = clip2->GetFrame(ret, env);
-    env->MakeWritable(&dst);
+    VSFrameRef *dst = vsapi->copyFrame(src, core);
+    vsapi->freeFrame(src);
 
-    sprintf(buf, "TDecimate %s by tritical", VERSION);
-    Draw(dst, 0, 0, buf, vi2);
-    sprintf(buf, "Mode: 7  Rate = %3.6f", rate);
-    Draw(dst, 0, 1, buf, vi2);
-    sprintf(buf, "inframe = %d  useframe = %d  chosen = %d", n, ret, chosen);
-    Draw(dst, 0, 2, buf, vi2);
-    sprintf(buf, "p = %d  c1 = %d  c2 = %d  n = %d", prev_f,
+#define SZ 160
+    char buf[SZ] = { 0 };
+
+    std::string text = "TDecimate " VERSION " by tritical\n";
+
+    snprintf(buf, SZ, "Mode: 7  Rate = %3.6f\n", rate);
+    text += buf;
+    snprintf(buf, SZ, "inframe = %d  useframe = %d  chosen = %d\n", n, ret, chosen);
+    text += buf;
+    snprintf(buf, SZ, "p = %d  c1 = %d  c2 = %d  n = %d\n", prev_f,
       curr1_f, curr2_f, next_f);
-    Draw(dst, 0, 3, buf, vi2);
-    sprintf(buf, "dt = %3.2f  %" PRIu64 "  vt = %3.2f  %" PRIu64 "", dupThresh, same_thresh,
+    text += buf;
+    snprintf(buf, SZ, "dt = %3.2f  %" PRIu64 "  vt = %3.2f  %" PRIu64 "\n", dupThresh, same_thresh,
       vidThresh, diff_thresh);
-    Draw(dst, 0, 4, buf, vi2);
-    int pt = 5;
+    text += buf;
+
     for (int i = std::max(0, ret - 3); i <= std::min(ret + 3, nfrms); ++i)
     {
-      sprintf(buf, "%d:  %3.2f  %" PRIu64 "%s%s", i, double(metricsOutArray[i << 1])*100.0 / double(MAX_DIFF),
+      snprintf(buf, SZ, "%d:  %3.2f  %" PRIu64 "%s%s\n", i, double(metricsOutArray[i << 1])*100.0 / double(MAX_DIFF),
         metricsOutArray[i << 1], metricsOutArray[i << 1] < same_thresh ? "  (D)" :
         metricsOutArray[i << 1] > diff_thresh ? "  (N)" :
         aLUT[i] == 2 ? "  (N)" : aLUT[i] == 1 ? "  (S)" :
         aLUT[i] == 0 ? "  (D)" : "", wasChosen(i, n) ? "  *" : "");
-      Draw(dst, 0, pt++, buf, vi2);
+    text += buf;
     }
+#undef SZ
+
+    VSMap *props = vsapi->getFramePropsRW(dst);
+    vsapi->propSetData(props, PROP_TDecimateDisplay, text.c_str(), text.size(), paReplace);
+
     return dst;
   }
-  if (!useclip2) return child->GetFrame(ret, env);
-  return clip2->GetFrame(ret, env);
+  return src;
 }
 
 bool TDecimate::wasChosen(int i, int n)
@@ -168,43 +207,43 @@ bool TDecimate::wasChosen(int i, int n)
   return false;
 }
 
-bool TDecimate::same_group(int f1, int f2, IScriptEnvironment *env)
+bool TDecimate::same_group(int f1, int f2)
 {
-  return diff_f(f1, f2, env) <= 0;
+  return diff_f(f1, f2) <= 0;
 }
 
-bool TDecimate::similar_group(int f1, int f2, IScriptEnvironment *env)
+bool TDecimate::similar_group(int f1, int f2)
 {
-  return diff_f(f1, f2, env) <= 1;
+  return diff_f(f1, f2) <= 1;
 }
 
-bool TDecimate::diff_group(int f1, int f2, IScriptEnvironment *env)
+bool TDecimate::diff_group(int f1, int f2)
 {
-  return diff_f(f1, f2, env) == 2;
+  return diff_f(f1, f2) == 2;
 }
 
-int TDecimate::diff_f(int f1, int f2, IScriptEnvironment *env)
+int TDecimate::diff_f(int f1, int f2)
 {
   int mx = 0;
   if (f2 < f1 || f2 < 0 || f1 > nfrms)
-    env->ThrowError("TDecimate:  mode 7 internal error (f2 < f1)!");
+      throw TIVTCError("TDecimate:  mode 7 internal error (f2 < f1)!");
   if (f1 < 0) f1 = 0;
   if (f2 > nfrms) f2 = nfrms;
   if (f1 == f2)
   {
     if (aLUT[f2] == -20)
-      aLUT[f2] = mode7_analysis(f2, env);
+      aLUT[f2] = mode7_analysis(f2);
     return 0;
   }
   for (int i = f1 + 1; i <= f2; ++i)
   {
-    if (aLUT[i] == -20) aLUT[i] = mode7_analysis(i, env);
+    if (aLUT[i] == -20) aLUT[i] = mode7_analysis(i);
     mx = std::max(mx, aLUT[i]);
   }
   return mx;
 }
 
-int TDecimate::mode7_analysis(int n, IScriptEnvironment *env)
+int TDecimate::mode7_analysis(int n) const
 {
   uint64_t vals[3] = { UINT64_MAX, UINT64_MAX, UINT64_MAX };
   if (n == 0) return 2;
@@ -214,14 +253,14 @@ int TDecimate::mode7_analysis(int n, IScriptEnvironment *env)
   if (n == nfrms)
   {
     if (vals[0] == UINT64_MAX || vals[1] == UINT64_MAX)
-      env->ThrowError("TDecimate:  mode 7 internal error (uncalculated metrics)!");
+        throw TIVTCError("TDecimate:  mode 7 internal error (uncalculated metrics)!");
     if (vals[1] > diff_thresh || vals[1] * 2 > vals[0] * 3) return 2;
     else if (vals[1] < same_thresh || vals[1] * 4 < vals[0] ||
       (vals[1] * 2 < vals[0] && vals[0] > diff_thresh)) return 0;
     return 1;
   }
   if (vals[0] == UINT64_MAX || vals[1] == UINT64_MAX || vals[2] == UINT64_MAX)
-    env->ThrowError("TDecimate:  mode 7 internal error (uncalculated metrics)!");
+      throw TIVTCError("TDecimate:  mode 7 internal error (uncalculated metrics)!");
   if (vals[1] > diff_thresh) return 2; // definitely different
   else if (vals[1] < same_thresh) return 0; // definitely the same
   else if (vals[1] < vals[0] && vals[1] < vals[2]) // local minimum difference

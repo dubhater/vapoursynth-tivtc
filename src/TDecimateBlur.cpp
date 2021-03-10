@@ -27,42 +27,46 @@
 #include "TDecimateASM.h"
 
 // hbd ready
-void blurFrame(PVideoFrame &src, PVideoFrame &dst, int iterations,
-  bool bchroma, IScriptEnvironment *env, VideoInfo& vi_t, int cpuFlags)
+void blurFrame(const VSFrameRef *src, VSFrameRef *dst, int iterations,
+  bool bchroma, const CPUFeatures *cpuFlags, VSCore *core, const VSAPI *vsapi)
 {
-  PVideoFrame tmp = env->NewVideoFrame(vi_t);
-  HorizontalBlur(src, tmp, bchroma, vi_t, cpuFlags);
-  VerticalBlur(tmp, dst, bchroma, vi_t, cpuFlags);
+    const VSFormat *format = vsapi->getFrameFormat(src);
+    int width = vsapi->getFrameWidth(src, 0);
+    int height = vsapi->getFrameHeight(src, 0);
+
+  VSFrameRef *tmp = vsapi->newVideoFrame(format, width, height, nullptr, core);
+  HorizontalBlur(src, tmp, bchroma, cpuFlags, vsapi);
+  VerticalBlur(tmp, dst, bchroma, cpuFlags, vsapi);
   for (int i = 1; i < iterations; ++i)
   {
-    HorizontalBlur(dst, tmp, bchroma, vi_t, cpuFlags);
-    VerticalBlur(tmp, dst, bchroma, vi_t, cpuFlags);
+    HorizontalBlur(dst, tmp, bchroma, cpuFlags, vsapi);
+    VerticalBlur(tmp, dst, bchroma, cpuFlags, vsapi);
   }
+  vsapi->freeFrame(tmp);
 }
 
-void HorizontalBlur(PVideoFrame &src, PVideoFrame &dst, bool bchroma,
-  VideoInfo& vi_t, int cpuFlags)
+void HorizontalBlur(const VSFrameRef *src, VSFrameRef *dst, bool bchroma,
+  const CPUFeatures *cpuFlags, const VSAPI *vsapi)
 {
-  const int planes[3] = { PLANAR_Y, PLANAR_U, PLANAR_V };
+    const VSFormat *format = vsapi->getFrameFormat(src);
 
-  const int np = (vi_t.IsYUY2() || vi_t.IsY() || !bchroma) ? 1 : 3; // luma only (!chroma) only 1 planar planes
+  const int np = !bchroma ? 1 : format->numPlanes;
 
-  const bool use_sse2 = (cpuFlags & CPUF_SSE2) ? true : false;
+  const bool use_sse2 = cpuFlags->sse2;
 
-  const int pixelsize = vi_t.ComponentSize();
+  const int pixelsize = format->bytesPerSample;
 
   for (int b = 0; b < np; ++b)
   {
-    const int plane = planes[b];
-    const uint8_t *srcp = src->GetReadPtr(plane);
-    int src_pitch = src->GetPitch(plane);
-    int width = src->GetRowSize(plane) / pixelsize;
+    const int plane = b;
+    const uint8_t *srcp = vsapi->getReadPtr(src, plane);
+    int src_pitch = vsapi->getStride(src, plane);
+    int width = vsapi->getFrameWidth(src, plane);
     int widtha = (width >> 3) << 3; // mod 8
-    int height = src->GetHeight(plane);
-    uint8_t *dstp = dst->GetWritePtr(plane);
-    int dst_pitch = dst->GetPitch(plane);
-    if (vi_t.IsPlanar())
-    {
+    int height = vsapi->getFrameHeight(src, plane);
+    uint8_t *dstp = vsapi->getWritePtr(dst, plane);
+    int dst_pitch = vsapi->getStride(dst, plane);
+
       if (pixelsize == 1 && use_sse2 && width >= 8)
       {
         // always mod 8, sse2 unaligned!
@@ -78,40 +82,6 @@ void HorizontalBlur(PVideoFrame &src, PVideoFrame &dst, bool bchroma,
         else // 10-16 bits
           HorizontalBlur_Planar_c<uint16_t>(srcp, dstp, src_pitch, dst_pitch, width, height, false);
       }
-    }
-    else
-    {
-      // YUY2
-      if (bchroma)
-      {
-        if (use_sse2 && width >= 8)
-        {
-          HorizontalBlur_YUY2_SSE2(srcp, dstp, src_pitch, dst_pitch, widtha, height);
-          // rest non mod 8 no the right
-          HorizontalBlur_YUY2_c(srcp + widtha, dstp + widtha, src_pitch, dst_pitch, width - widtha, height, true);
-        }
-        else
-        {
-          // YUY2 luma-chroma C
-          HorizontalBlur_YUY2_c(srcp, dstp, src_pitch, dst_pitch, width, height, false);
-        }
-      }
-      else
-      {
-        // YUY2 luma only
-        if (use_sse2 && width >= 8)
-        {
-          HorizontalBlur_YUY2_lumaonly_SSE2(srcp, dstp, src_pitch, dst_pitch, widtha, height);
-          // rest non mod 8 no the right
-          HorizontalBlur_YUY2_lumaonly_c(srcp + widtha, dstp + widtha, src_pitch, dst_pitch, width - widtha, height, true);
-        }
-        else
-        {
-          // rest non mod 8 no the right
-          HorizontalBlur_YUY2_lumaonly_c(srcp, dstp, src_pitch, dst_pitch, width, height, false);
-        }
-      }
-    }
   }
 }
 
@@ -150,34 +120,34 @@ void VerticalBlur_c(const uint8_t* srcp0, uint8_t* dstp0, int src_pitch,
     dstp[x] = (srcpp[x] + srcp[x] + 1) >> 1;
 }
 
-void VerticalBlur_YUY2_c(const uint8_t* srcp, uint8_t* dstp, int src_pitch,
-  int dst_pitch, int width, int height, int inc)
-{
-  if (width == 0) return;
+//void VerticalBlur_YUY2_c(const uint8_t* srcp, uint8_t* dstp, int src_pitch,
+//  int dst_pitch, int width, int height, int inc)
+//{
+//  if (width == 0) return;
 
-  const uint8_t* srcpp = srcp - src_pitch;
-  const uint8_t* srcpn = srcp + src_pitch;
-  // top line
-  for (int x = 0; x < width; x += inc)
-    dstp[x] = (srcp[x] + srcpn[x] + 1) >> 1;
-  srcpp += src_pitch;
-  srcp += src_pitch;
-  srcpn += src_pitch;
-  dstp += dst_pitch;
-  // height - 2 lines in between
-  for (int y = 1; y < height - 1; ++y)
-  {
-    for (int x = 0; x < width; x += inc)
-      dstp[x] = (srcpp[x] + (srcp[x] << 1) + srcpn[x] + 2) >> 2;
-    srcpp += src_pitch;
-    srcp += src_pitch;
-    srcpn += src_pitch;
-    dstp += dst_pitch;
-  }
-  // bottom line
-  for (int x = 0; x < width; x += inc)
-    dstp[x] = (srcpp[x] + srcp[x] + 1) >> 1;
-}
+//  const uint8_t* srcpp = srcp - src_pitch;
+//  const uint8_t* srcpn = srcp + src_pitch;
+//  // top line
+//  for (int x = 0; x < width; x += inc)
+//    dstp[x] = (srcp[x] + srcpn[x] + 1) >> 1;
+//  srcpp += src_pitch;
+//  srcp += src_pitch;
+//  srcpn += src_pitch;
+//  dstp += dst_pitch;
+//  // height - 2 lines in between
+//  for (int y = 1; y < height - 1; ++y)
+//  {
+//    for (int x = 0; x < width; x += inc)
+//      dstp[x] = (srcpp[x] + (srcp[x] << 1) + srcpn[x] + 2) >> 2;
+//    srcpp += src_pitch;
+//    srcp += src_pitch;
+//    srcpn += src_pitch;
+//    dstp += dst_pitch;
+//  }
+//  // bottom line
+//  for (int x = 0; x < width; x += inc)
+//    dstp[x] = (srcpp[x] + srcp[x] + 1) >> 1;
+//}
 
 void VerticalBlur_SSE2(const uint8_t* srcp, uint8_t* dstp, int src_pitch,
   int dst_pitch, int width, int height)
@@ -192,43 +162,28 @@ void VerticalBlur_SSE2(const uint8_t* srcp, uint8_t* dstp, int src_pitch,
   }
 }
 
-void VerticalBlur(PVideoFrame& src, PVideoFrame& dst, bool bchroma,
-  VideoInfo& vi_t, int cpuFlags)
+void VerticalBlur(const VSFrameRef *src, VSFrameRef *dst, bool bchroma,
+  const CPUFeatures *cpuFlags, const VSAPI *vsapi)
 {
-  const int planes[3] = { PLANAR_Y, PLANAR_U, PLANAR_V };
+    const VSFormat *format = vsapi->getFrameFormat(src);
 
-  const int np = (vi_t.IsYUY2() || vi_t.IsY() || !bchroma) ? 1 : 3; // luma only (!chroma) only 1 planar planes
+  const int np = !bchroma ? 1 : format->numPlanes;
 
-  const bool use_sse2 = (cpuFlags & CPUF_SSE2) ? true : false;
+  const bool use_sse2 = cpuFlags->sse2;
 
-  const int pixelsize = vi_t.ComponentSize();
+  const int pixelsize = format->bytesPerSample;
 
   for (int b = 0; b < np; ++b)
   {
-    const int plane = planes[b];
-    const uint8_t* srcp = src->GetReadPtr(plane);
-    int src_pitch = src->GetPitch(plane);
-    int width = src->GetRowSize(plane) / pixelsize;
+    const int plane = b;
+    const uint8_t* srcp = vsapi->getReadPtr(src, plane);
+    int src_pitch = vsapi->getStride(src, plane);
+    int width = vsapi->getFrameWidth(src, plane);
     int widtha = (width >> 4) << 4; // mod 16
-    int height = src->GetHeight(plane);
-    uint8_t* dstp = dst->GetWritePtr(plane);
-    int dst_pitch = dst->GetPitch(plane);
+    int height = vsapi->getFrameHeight(src, plane);
+    uint8_t* dstp = vsapi->getWritePtr(dst, plane);
+    int dst_pitch = vsapi->getStride(dst, plane);
 
-    if (vi_t.IsYUY2()) {
-      const int inc = !bchroma ? 2 : 1; // YUY2 luma only: step 2 on 1st plane
-      if (use_sse2 && widtha >= 16)
-      {
-        // 16x block is Ok
-        // note: SSE2 version ignores chroma-only, it's quicker without it
-        // chroma result is n/a in this use case of blur
-        VerticalBlur_SSE2(srcp, dstp, src_pitch, dst_pitch, widtha, height);
-        VerticalBlur_YUY2_c(srcp + widtha, dstp + widtha, src_pitch, dst_pitch, width - widtha, height, inc);
-      }
-      else {
-        VerticalBlur_YUY2_c(srcp, dstp, src_pitch, dst_pitch, width, height, inc);
-      }
-    }
-    else {
       if (pixelsize == 1 && use_sse2 && widtha >= 16)
       {
         // 16x block is Ok
@@ -243,7 +198,7 @@ void VerticalBlur(PVideoFrame& src, PVideoFrame& dst, bool bchroma,
         else // 10-16 bits
           VerticalBlur_c<uint16_t>(srcp, dstp, src_pitch, dst_pitch, width, height);
       }
-    }
+
   }
 }
 
@@ -287,86 +242,86 @@ void HorizontalBlur_Planar_c(const uint8_t* srcp0, uint8_t* dstp0, int src_pitch
   }
 }
 
-void HorizontalBlur_YUY2_lumaonly_c(const uint8_t* srcp, uint8_t* dstp, int src_pitch,
-  int dst_pitch, int width, int height, bool allow_leftminus1)
-{
-  if (width == 0)
-    return;
+//void HorizontalBlur_YUY2_lumaonly_c(const uint8_t* srcp, uint8_t* dstp, int src_pitch,
+//  int dst_pitch, int width, int height, bool allow_leftminus1)
+//{
+//  if (width == 0)
+//    return;
 
-  // YUYV minimum width is 4, at least two luma
-  const int startx = allow_leftminus1 ? 0 : 2;
-  for (int y = 0; y < height; ++y)
-  {
-    if (!allow_leftminus1)
-      dstp[0] = (srcp[0] + srcp[2] + 1) >> 1;
-    int x;
-    for (x = startx; x < width - 2; ++x)
-      dstp[x] = (srcp[x - 2] + (srcp[x] << 1) + srcp[x + 2] + 2) >> 2;
-    dstp[x] = (srcp[x - 2] + srcp[x] + 1) >> 1;
-    srcp += src_pitch;
-    dstp += dst_pitch;
-  }
-}
+//  // YUYV minimum width is 4, at least two luma
+//  const int startx = allow_leftminus1 ? 0 : 2;
+//  for (int y = 0; y < height; ++y)
+//  {
+//    if (!allow_leftminus1)
+//      dstp[0] = (srcp[0] + srcp[2] + 1) >> 1;
+//    int x;
+//    for (x = startx; x < width - 2; ++x)
+//      dstp[x] = (srcp[x - 2] + (srcp[x] << 1) + srcp[x + 2] + 2) >> 2;
+//    dstp[x] = (srcp[x - 2] + srcp[x] + 1) >> 1;
+//    srcp += src_pitch;
+//    dstp += dst_pitch;
+//  }
+//}
 
-void HorizontalBlur_YUY2_c(const uint8_t* srcp, uint8_t* dstp, int src_pitch,
-  int dst_pitch, int width, int height, bool allow_leftminus1)
-{
-  // width is rowwidth
-  if (width == 0)
-    return;
+//void HorizontalBlur_YUY2_c(const uint8_t* srcp, uint8_t* dstp, int src_pitch,
+//  int dst_pitch, int width, int height, bool allow_leftminus1)
+//{
+//  // width is rowwidth
+//  if (width == 0)
+//    return;
 
-  // YUYV minimum rowsize is 4, at least two luma
-  const int startx = allow_leftminus1 ? 0 : 4;
+//  // YUYV minimum rowsize is 4, at least two luma
+//  const int startx = allow_leftminus1 ? 0 : 4;
 
-  if (width >= 8) {
-    for (int y = 0; y < height; ++y)
-    {
-      if (!allow_leftminus1) {
-        dstp[0] = (srcp[-2] + (srcp[0] << 1) + srcp[2] + 2) >> 2; // Y
-        dstp[1] = (srcp[-3] + (srcp[1] << 1) + srcp[5] + 2) >> 2; // U
-        dstp[2] = (srcp[0] + (srcp[2] << 1) + srcp[4] + 2) >> 2; // Y
-        dstp[3] = (srcp[-1] + (srcp[3] << 1) + srcp[7] + 2) >> 2; // V
-      }
-      int x;
-      for (x = startx; x < width - 4; ++x)
-      {
-        dstp[x] = (srcp[x - 2] + (srcp[x] << 1) + srcp[x + 2] + 2) >> 2; // Y
-        ++x;
-        dstp[x] = (srcp[x - 4] + (srcp[x] << 1) + srcp[x + 4] + 2) >> 2; // U or V
-      }
-      dstp[x] = (srcp[x - 2] + (srcp[x] << 1) + srcp[x + 2] + 2) >> 2; // Y
-      ++x;
-      dstp[x] = (srcp[x - 4] + srcp[x] + 1) >> 1; // U
-      ++x;
-      dstp[x] = (srcp[x - 2] + srcp[x] + 1) >> 1; // Y
-      ++x;
-      dstp[x] = (srcp[x - 4] + srcp[x] + 1) >> 1; // V
-      srcp += src_pitch;
-      dstp += dst_pitch;
-    }
-    return;
-  }
+//  if (width >= 8) {
+//    for (int y = 0; y < height; ++y)
+//    {
+//      if (!allow_leftminus1) {
+//        dstp[0] = (srcp[-2] + (srcp[0] << 1) + srcp[2] + 2) >> 2; // Y
+//        dstp[1] = (srcp[-3] + (srcp[1] << 1) + srcp[5] + 2) >> 2; // U
+//        dstp[2] = (srcp[0] + (srcp[2] << 1) + srcp[4] + 2) >> 2; // Y
+//        dstp[3] = (srcp[-1] + (srcp[3] << 1) + srcp[7] + 2) >> 2; // V
+//      }
+//      int x;
+//      for (x = startx; x < width - 4; ++x)
+//      {
+//        dstp[x] = (srcp[x - 2] + (srcp[x] << 1) + srcp[x + 2] + 2) >> 2; // Y
+//        ++x;
+//        dstp[x] = (srcp[x - 4] + (srcp[x] << 1) + srcp[x + 4] + 2) >> 2; // U or V
+//      }
+//      dstp[x] = (srcp[x - 2] + (srcp[x] << 1) + srcp[x + 2] + 2) >> 2; // Y
+//      ++x;
+//      dstp[x] = (srcp[x - 4] + srcp[x] + 1) >> 1; // U
+//      ++x;
+//      dstp[x] = (srcp[x - 2] + srcp[x] + 1) >> 1; // Y
+//      ++x;
+//      dstp[x] = (srcp[x - 4] + srcp[x] + 1) >> 1; // V
+//      srcp += src_pitch;
+//      dstp += dst_pitch;
+//    }
+//    return;
+//  }
 
-  // width (rowsize) == 4
-  for (int y = 0; y < height; ++y)
-  {
-    if (allow_leftminus1) {
-      dstp[0] = (srcp[-2] + (srcp[0] << 1) + srcp[2] + 2) >> 2; // Y
-      dstp[1] = (srcp[-3] + srcp[1] + 1) >> 1; // U
-      dstp[2] = (srcp[0] + srcp[2] + 1) >> 1; // Y
-      dstp[3] = (srcp[-1] + srcp[3] + 1) >> 1; // V
-    }
-    else {
-      dstp[0] = (srcp[0] + srcp[2] + 1) >> 1; // Y
-      dstp[1] = srcp[1]; // U
-      dstp[2] = (srcp[0] + srcp[2] + 1) >> 1; // Y
-      dstp[3] = srcp[3]; // V
-    }
-    srcp += src_pitch;
-    dstp += dst_pitch;
-  }
+//  // width (rowsize) == 4
+//  for (int y = 0; y < height; ++y)
+//  {
+//    if (allow_leftminus1) {
+//      dstp[0] = (srcp[-2] + (srcp[0] << 1) + srcp[2] + 2) >> 2; // Y
+//      dstp[1] = (srcp[-3] + srcp[1] + 1) >> 1; // U
+//      dstp[2] = (srcp[0] + srcp[2] + 1) >> 1; // Y
+//      dstp[3] = (srcp[-1] + srcp[3] + 1) >> 1; // V
+//    }
+//    else {
+//      dstp[0] = (srcp[0] + srcp[2] + 1) >> 1; // Y
+//      dstp[1] = srcp[1]; // U
+//      dstp[2] = (srcp[0] + srcp[2] + 1) >> 1; // Y
+//      dstp[3] = srcp[3]; // V
+//    }
+//    srcp += src_pitch;
+//    dstp += dst_pitch;
+//  }
 
-}
+//}
 
 // always mod 8, sse2 unaligned
 void HorizontalBlur_Planar_SSE2(const uint8_t *srcp, uint8_t *dstp, int src_pitch,
@@ -395,49 +350,49 @@ void HorizontalBlur_Planar_SSE2(const uint8_t *srcp, uint8_t *dstp, int src_pitc
   }
 }
 
-void HorizontalBlur_YUY2_lumaonly_SSE2(const uint8_t *srcp, uint8_t *dstp, int src_pitch,
-  int dst_pitch, int width, int height)
-{
-  HorizontalBlurSSE2_YUY2_R_luma(srcp + 8, dstp + 8, src_pitch, dst_pitch, width - 16, height);
+//void HorizontalBlur_YUY2_lumaonly_SSE2(const uint8_t *srcp, uint8_t *dstp, int src_pitch,
+//  int dst_pitch, int width, int height)
+//{
+//  HorizontalBlurSSE2_YUY2_R_luma(srcp + 8, dstp + 8, src_pitch, dst_pitch, width - 16, height);
 
-  for (int y = 0; y < height; ++y)
-  {
-    dstp[0] = (srcp[0] + srcp[2] + 1) >> 1;
-    dstp[2] = (srcp[0] + (srcp[2] << 1) + srcp[4] + 2) >> 2;
-    dstp[4] = (srcp[2] + (srcp[4] << 1) + srcp[6] + 2) >> 2;
-    dstp[6] = (srcp[4] + (srcp[6] << 1) + srcp[8] + 2) >> 2;
-    dstp[width - 8] = (srcp[width - 10] + (srcp[width - 8] << 1) + srcp[width - 6] + 2) >> 2;
-    dstp[width - 6] = (srcp[width - 8] + (srcp[width - 6] << 1) + srcp[width - 4] + 2) >> 2;
-    dstp[width - 4] = (srcp[width - 6] + (srcp[width - 4] << 1) + srcp[width - 2] + 2) >> 2;
-    dstp[width - 2] = (srcp[width - 4] + srcp[width - 2] + 1) >> 1;
-    srcp += src_pitch;
-    dstp += dst_pitch;
-  }
-}
+//  for (int y = 0; y < height; ++y)
+//  {
+//    dstp[0] = (srcp[0] + srcp[2] + 1) >> 1;
+//    dstp[2] = (srcp[0] + (srcp[2] << 1) + srcp[4] + 2) >> 2;
+//    dstp[4] = (srcp[2] + (srcp[4] << 1) + srcp[6] + 2) >> 2;
+//    dstp[6] = (srcp[4] + (srcp[6] << 1) + srcp[8] + 2) >> 2;
+//    dstp[width - 8] = (srcp[width - 10] + (srcp[width - 8] << 1) + srcp[width - 6] + 2) >> 2;
+//    dstp[width - 6] = (srcp[width - 8] + (srcp[width - 6] << 1) + srcp[width - 4] + 2) >> 2;
+//    dstp[width - 4] = (srcp[width - 6] + (srcp[width - 4] << 1) + srcp[width - 2] + 2) >> 2;
+//    dstp[width - 2] = (srcp[width - 4] + srcp[width - 2] + 1) >> 1;
+//    srcp += src_pitch;
+//    dstp += dst_pitch;
+//  }
+//}
 
-void HorizontalBlur_YUY2_SSE2(const uint8_t *srcp, uint8_t *dstp, int src_pitch,
-  int dst_pitch, int width, int height)
-{
-  HorizontalBlurSSE2_YUY2_R(srcp + 8, dstp + 8, src_pitch, dst_pitch, width - 16, height);
-  for (int y = 0; y < height; ++y)
-  {
-    dstp[0] = (srcp[0] + srcp[2] + 1) >> 1;
-    dstp[1] = (srcp[1] + srcp[5] + 1) >> 1;
-    dstp[2] = (srcp[0] + (srcp[2] << 1) + srcp[4] + 2) >> 2;
-    dstp[3] = (srcp[3] + srcp[7] + 1) >> 1;
-    dstp[4] = (srcp[2] + (srcp[4] << 1) + srcp[6] + 2) >> 2;
-    dstp[5] = (srcp[1] + (srcp[5] << 1) + srcp[9] + 2) >> 2;
-    dstp[6] = (srcp[4] + (srcp[6] << 1) + srcp[8] + 2) >> 2;
-    dstp[7] = (srcp[3] + (srcp[7] << 1) + srcp[11] + 2) >> 2;
-    dstp[width - 8] = (srcp[width - 10] + (srcp[width - 8] << 1) + srcp[width - 6] + 2) >> 2;
-    dstp[width - 7] = (srcp[width - 11] + (srcp[width - 7] << 1) + srcp[width - 3] + 2) >> 2;
-    dstp[width - 6] = (srcp[width - 8] + (srcp[width - 6] << 1) + srcp[width - 4] + 2) >> 2;
-    dstp[width - 5] = (srcp[width - 9] + (srcp[width - 5] << 1) + srcp[width - 1] + 2) >> 2;
-    dstp[width - 4] = (srcp[width - 6] + (srcp[width - 4] << 1) + srcp[width - 2] + 2) >> 2;
-    dstp[width - 3] = (srcp[width - 7] + srcp[width - 3] + 1) >> 1;
-    dstp[width - 2] = (srcp[width - 4] + srcp[width - 2] + 1) >> 1;
-    dstp[width - 1] = (srcp[width - 5] + srcp[width - 1] + 1) >> 1;
-    srcp += src_pitch;
-    dstp += dst_pitch;
-  }
-}
+//void HorizontalBlur_YUY2_SSE2(const uint8_t *srcp, uint8_t *dstp, int src_pitch,
+//  int dst_pitch, int width, int height)
+//{
+//  HorizontalBlurSSE2_YUY2_R(srcp + 8, dstp + 8, src_pitch, dst_pitch, width - 16, height);
+//  for (int y = 0; y < height; ++y)
+//  {
+//    dstp[0] = (srcp[0] + srcp[2] + 1) >> 1;
+//    dstp[1] = (srcp[1] + srcp[5] + 1) >> 1;
+//    dstp[2] = (srcp[0] + (srcp[2] << 1) + srcp[4] + 2) >> 2;
+//    dstp[3] = (srcp[3] + srcp[7] + 1) >> 1;
+//    dstp[4] = (srcp[2] + (srcp[4] << 1) + srcp[6] + 2) >> 2;
+//    dstp[5] = (srcp[1] + (srcp[5] << 1) + srcp[9] + 2) >> 2;
+//    dstp[6] = (srcp[4] + (srcp[6] << 1) + srcp[8] + 2) >> 2;
+//    dstp[7] = (srcp[3] + (srcp[7] << 1) + srcp[11] + 2) >> 2;
+//    dstp[width - 8] = (srcp[width - 10] + (srcp[width - 8] << 1) + srcp[width - 6] + 2) >> 2;
+//    dstp[width - 7] = (srcp[width - 11] + (srcp[width - 7] << 1) + srcp[width - 3] + 2) >> 2;
+//    dstp[width - 6] = (srcp[width - 8] + (srcp[width - 6] << 1) + srcp[width - 4] + 2) >> 2;
+//    dstp[width - 5] = (srcp[width - 9] + (srcp[width - 5] << 1) + srcp[width - 1] + 2) >> 2;
+//    dstp[width - 4] = (srcp[width - 6] + (srcp[width - 4] << 1) + srcp[width - 2] + 2) >> 2;
+//    dstp[width - 3] = (srcp[width - 7] + srcp[width - 3] + 1) >> 1;
+//    dstp[width - 2] = (srcp[width - 4] + srcp[width - 2] + 1) >> 1;
+//    dstp[width - 1] = (srcp[width - 5] + srcp[width - 1] + 1) >> 1;
+//    srcp += src_pitch;
+//    dstp += dst_pitch;
+//  }
+//}

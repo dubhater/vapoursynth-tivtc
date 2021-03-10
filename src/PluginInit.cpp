@@ -32,6 +32,7 @@
 
 #include "TFM.h"
 #include "TFMPP.h"
+#include "TDecimate.h"
 
 
 static void VS_CC tfmInit(VSMap *in, VSMap *out, void **instanceData, VSNode *node, VSCore *core, const VSAPI *vsapi) {
@@ -96,16 +97,24 @@ static void VS_CC tfmppFree(void *instanceData, VSCore *core, const VSAPI *vsapi
 }
 
 
-static void VS_CC tfmDisplayFunc(const VSMap *in, VSMap *out, void *userData, VSCore *core, const VSAPI *vsapi) {
+enum DisplayFilters {
+    DisplayTFM,
+    DisplayTDecimate
+};
+
+template <DisplayFilters filter>
+static void VS_CC tivtcDisplayFunc(const VSMap *in, VSMap *out, void *userData, VSCore *core, const VSAPI *vsapi) {
     VSNodeRef *clip = (VSNodeRef *)userData;
+
+    const char *display_prop = filter == DisplayTFM ? PROP_TFMDisplay : PROP_TDecimateDisplay;
 
     const VSFrameRef *f = vsapi->propGetFrame(in, "f", 0, nullptr);
     const VSMap *props = vsapi->getFramePropsRO(f);
-    const char *text = vsapi->propGetData(props, PROP_TFMDisplay, 0, nullptr);
-    int text_size = vsapi->propGetDataSize(props, PROP_TFMDisplay, 0, nullptr);
+    const char *text = vsapi->propGetData(props, display_prop, 0, nullptr);
+    int text_size = vsapi->propGetDataSize(props, display_prop, 0, nullptr);
 
     VSMap *params = vsapi->createMap();
-    vsapi->propSetNode(params, "clip", clip, paReplace); // clip is freed by vapoursynth somewhere.
+    vsapi->propSetNode(params, "clip", clip, paReplace); // clip is freed by vapoursynth somewhere. We don't free it here.
     vsapi->propSetData(params, "text", text, text_size, paReplace);
     vsapi->freeFrame(f);
 
@@ -114,7 +123,7 @@ static void VS_CC tfmDisplayFunc(const VSMap *in, VSMap *out, void *userData, VS
     vsapi->freeMap(params);
     if (vsapi->getError(ret)) {
         char error[512] = { 0 };
-        snprintf(error, 512, "TFM: failed to invoke text.Text: %s", vsapi->getError(ret));
+        snprintf(error, 512, "%s: failed to invoke text.Text: %s", filter == DisplayTFM ? "TFM" : "TDecimate", vsapi->getError(ret));
         vsapi->freeMap(ret);
         vsapi->setError(out, error);
         return;
@@ -349,7 +358,7 @@ static void VS_CC tfmCreate(const VSMap *in, VSMap *out, void *userData, VSCore 
         VSNodeRef *node = vsapi->propGetNode(out, "clip", 0, nullptr);
         vsapi->propSetNode(params, "clip", node, paReplace);
         vsapi->propSetNode(params, "prop_src", node, paReplace);
-        VSFuncRef *displayFuncRef = vsapi->createFunc(tfmDisplayFunc, vsapi->cloneNodeRef(node), (VSFreeFuncData)vsapi->freeNode, core, vsapi);
+        VSFuncRef *displayFuncRef = vsapi->createFunc(tivtcDisplayFunc<DisplayTFM>, vsapi->cloneNodeRef(node), (VSFreeFuncData)vsapi->freeNode, core, vsapi);
         vsapi->freeNode(node);
         vsapi->propSetFunc(params, "eval", displayFuncRef, paReplace);
         vsapi->freeFunc(displayFuncRef);
@@ -359,6 +368,269 @@ static void VS_CC tfmCreate(const VSMap *in, VSMap *out, void *userData, VSCore 
         if (vsapi->getError(ret)) {
             char error[512] = { 0 };
             snprintf(error, 512, "TFM: failed to invoke std.FrameEval: %s", vsapi->getError(ret));
+            vsapi->freeMap(ret);
+            vsapi->setError(out, error);
+            return;
+        }
+        node = vsapi->propGetNode(ret, "clip", 0, nullptr);
+        vsapi->freeMap(ret);
+        vsapi->propSetNode(out, "clip", node, paReplace);
+        vsapi->freeNode(node);
+    }
+}
+
+
+static void VS_CC tdecimateInit(VSMap *in, VSMap *out, void **instanceData, VSNode *node, VSCore *core, const VSAPI *vsapi) {
+    (void)in;
+    (void)out;
+    (void)core;
+
+    TDecimate *d = (TDecimate *) *instanceData;
+
+    vsapi->setVideoInfo(&d->vi, 1, node);
+}
+
+
+static const VSFrameRef *VS_CC tdecimateGetFrame(int n, int activationReason, void **instanceData, void **frameData, VSFrameContext *frameCtx, VSCore *core, const VSAPI *vsapi) {
+    (void)vsapi;
+
+    TDecimate *d = (TDecimate *) *instanceData;
+
+    return d->GetFrame(n, activationReason, frameData, frameCtx, core);
+}
+
+
+static void VS_CC tdecimateFree(void *instanceData, VSCore *core, const VSAPI *vsapi) {
+    (void)core;
+    (void)vsapi;
+
+    TDecimate *d = (TDecimate *)instanceData;
+
+    delete d;
+}
+
+
+static void VS_CC tdecimateCreate(const VSMap *in, VSMap *out, void *userData, VSCore *core, const VSAPI *vsapi) {
+    (void)userData;
+
+    int err;
+
+    VSNodeRef *clip = vsapi->propGetNode(in, "clip", 0, nullptr); /// move lower if possible
+
+    int mode = int64ToIntS(vsapi->propGetInt(in, "mode", 0, &err));
+    if (err)
+        mode = 0;
+
+    int cycleR = int64ToIntS(vsapi->propGetInt(in, "cycleR", 0, &err));
+    if (err)
+        cycleR = 1;
+
+    int cycle = int64ToIntS(vsapi->propGetInt(in, "cycle", 0, &err));
+    if (err)
+        cycle = 5;
+
+    double rate = vsapi->propGetFloat(in, "rate", 0, &err);
+    if (err)
+        rate = 23.976;
+
+    bool chroma = !!vsapi->propGetInt(in, "chroma", 0, &err);
+    if (err)
+        chroma = true;
+
+    {
+        const VSVideoInfo *vi = vsapi->getVideoInfo(clip);
+        if (vi->format && vi->format->colorFamily == cmGray)
+            chroma = false;
+    }
+
+    double dupThresh = vsapi->propGetFloat(in, "dupThresh", 0, &err);
+    if (err)
+        dupThresh = mode == 7 ? (chroma ? 0.4 : 0.5)
+                              : (chroma ? 1.1 : 1.4);
+
+    double vidThresh = vsapi->propGetFloat(in, "vidThresh", 0, &err);
+    if (err)
+        vidThresh = mode == 7 ? (chroma ? 3.5 : 4.0)
+                              : (chroma ? 1.1 : 1.4);
+
+    double sceneThresh = vsapi->propGetFloat(in, "sceneThresh", 0, &err);
+    if (err)
+        sceneThresh = 15;
+
+    int hybrid = int64ToIntS(vsapi->propGetInt(in, "hybrid", 0, &err));
+    if (err)
+        hybrid = 0;
+
+    int vidDetect = int64ToIntS(vsapi->propGetInt(in, "vidDetect", 0, &err));
+    if (err)
+        vidDetect = 3;
+
+    int conCycle = int64ToIntS(vsapi->propGetInt(in, "conCycle", 0, &err));
+    if (err)
+        conCycle = vidDetect >= 3 ? 1 : 2;
+
+    int conCycleTP = int64ToIntS(vsapi->propGetInt(in, "conCycleTP", 0, &err));
+    if (err)
+        conCycleTP = vidDetect >= 3 ? 1 : 2;
+
+    const char *ovr = vsapi->propGetData(in, "ovr", 0, &err);
+    if (err)
+        ovr = "";
+
+    const char *output = vsapi->propGetData(in, "output", 0, &err);
+    if (err)
+        output = "";
+
+    const char *input = vsapi->propGetData(in, "input", 0, &err);
+    if (err)
+        input = "";
+
+    const char *tfmIn = vsapi->propGetData(in, "tfmIn", 0, &err);
+    if (err)
+        tfmIn = "";
+
+    const char *mkvOut = vsapi->propGetData(in, "mkvOut", 0, &err);
+    if (err)
+        mkvOut = "";
+
+    int nt = int64ToIntS(vsapi->propGetInt(in, "nt", 0, &err));
+    if (err)
+        nt = 0;
+
+    int blockx = int64ToIntS(vsapi->propGetInt(in, "blockx", 0, &err));
+    if (err)
+        blockx = 32;
+
+    int blocky = int64ToIntS(vsapi->propGetInt(in, "blocky", 0, &err));
+    if (err)
+        blocky = 32;
+
+    bool debug = !!vsapi->propGetInt(in, "debug", 0, &err);
+    if (err)
+        debug = false;
+
+    bool display = !!vsapi->propGetInt(in, "display", 0, &err);
+    if (err)
+        display = false;
+
+    int vfrDec = int64ToIntS(vsapi->propGetInt(in, "vfrDec", 0, &err));
+    if (err)
+        vfrDec = 1;
+
+    bool batch = !!vsapi->propGetInt(in, "batch", 0, &err);
+    if (err)
+        batch = false;
+
+    bool tcfv1 = !!vsapi->propGetInt(in, "tcfv1", 0, &err);
+    if (err)
+        tcfv1 = true;
+
+    bool se = !!vsapi->propGetInt(in, "se", 0, &err);
+    if (err)
+        se = false;
+
+    bool exPP = !!vsapi->propGetInt(in, "exPP", 0, &err);
+    if (err)
+        exPP = false;
+
+    int maxndl = int64ToIntS(vsapi->propGetInt(in, "maxndl", 0, &err));
+    if (err)
+        maxndl = -200;
+
+    bool m2PA = !!vsapi->propGetInt(in, "m2PA", 0, &err);
+    if (err)
+        m2PA = false;
+
+    bool denoise = !!vsapi->propGetInt(in, "denoise", 0, &err);
+    if (err)
+        denoise = false;
+
+    bool noblend = !!vsapi->propGetInt(in, "noblend", 0, &err);
+    if (err)
+        noblend = true;
+
+    bool ssd = !!vsapi->propGetInt(in, "ssd", 0, &err);
+    if (err)
+        ssd = false;
+
+    bool hint = !!vsapi->propGetInt(in, "hint", 0, &err);
+    if (err)
+        hint = true;
+
+    VSNodeRef *clip2 = vsapi->propGetNode(in, "clip2", 0, &err);
+    if (err)
+        clip2 = vsapi->cloneNodeRef(clip); // simplifies the code in the getframe functions
+
+    int sdlim = int64ToIntS(vsapi->propGetInt(in, "sdlim", 0, &err));
+    if (err)
+        sdlim = 0;
+
+    int opt = int64ToIntS(vsapi->propGetInt(in, "opt", 0, &err));
+    if (err)
+        opt = 4;
+
+    const char *orgOut = vsapi->propGetData(in, "orgOut", 0, &err);
+    if (err)
+        orgOut = "";
+
+
+    TDecimate *tdecimate_data;
+
+    try {
+        tdecimate_data = new TDecimate(clip, mode, cycleR, cycle, rate, dupThresh, vidThresh, sceneThresh, hybrid, vidDetect, conCycle, conCycleTP, ovr, output, input, tfmIn, mkvOut, nt, blockx, blocky, debug, display, vfrDec, batch, tcfv1, se, chroma, exPP, maxndl, m2PA, denoise, noblend, ssd, hint, clip2, sdlim, opt, orgOut, vsapi, core);
+    } catch (const TIVTCError& e) {
+        vsapi->setError(out, e.what());
+
+        vsapi->freeNode(clip);
+        vsapi->freeNode(clip2);
+
+        return;
+    }
+
+    int filter_modes[8] = {
+        fmParallelRequests,
+        fmParallelRequests,
+        fmUnordered, // Either fmUnordered or fmParallelRequests. I figured out which one but I didn't write it down and forgot.
+        fmSerial,
+        fmParallel,
+        fmParallel,
+        fmParallel,
+        fmUnordered
+    };
+    int filter_flags[8] = {
+        0,
+        0,
+        0,
+        nfMakeLinear,
+        0,
+        0,
+        0,
+        0
+    };
+
+    vsapi->createFilter(in, out, "TDecimate", tdecimateInit, tdecimateGetFrame, tdecimateFree, filter_modes[mode], filter_flags[mode], tdecimate_data, core);
+
+    if (vsapi->getError(out))
+        return;
+
+
+    if (display) {
+        // text.FrameProps won't print the TDecimateDisplay property because it is too long,
+        // so we use text.Text with std.FrameEval instead.
+        VSMap *params = vsapi->createMap();
+        VSNodeRef *node = vsapi->propGetNode(out, "clip", 0, nullptr);
+        vsapi->propSetNode(params, "clip", node, paReplace);
+        vsapi->propSetNode(params, "prop_src", node, paReplace);
+        VSFuncRef *displayFuncRef = vsapi->createFunc(tivtcDisplayFunc<DisplayTDecimate>, vsapi->cloneNodeRef(node), (VSFreeFuncData)vsapi->freeNode, core, vsapi);
+        vsapi->freeNode(node);
+        vsapi->propSetFunc(params, "eval", displayFuncRef, paReplace);
+        vsapi->freeFunc(displayFuncRef);
+        VSPlugin *std_plugin = vsapi->getPluginById("com.vapoursynth.std", core);
+        VSMap *ret = vsapi->invoke(std_plugin, "FrameEval", params);
+        vsapi->freeMap(params);
+        if (vsapi->getError(ret)) {
+            char error[512] = { 0 };
+            snprintf(error, 512, "TDecimate: failed to invoke std.FrameEval: %s", vsapi->getError(ret));
             vsapi->freeMap(ret);
             vsapi->setError(out, error);
             return;
@@ -411,62 +683,45 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(VSConfigPlugin configFunc, VSRegiste
                  "mmsco:int:opt;"
                  "opt:int:opt;"
                  , tfmCreate, nullptr, plugin);
+
+    registerFunc("TDecimate",
+                 "clip:clip;"
+                 "mode:int:opt;"
+                 "cycleR:int:opt;"
+                 "cycle:int:opt;"
+                 "rate:float:opt;"
+                 "dupThresh:float:opt;"
+                 "vidThresh:float:opt;"
+                 "sceneThresh:float:opt;"
+                 "hybrid:int:opt;"
+                 "vidDetect:int:opt;"
+                 "conCycle:int:opt;"
+                 "conCycleTP:int:opt;"
+                 "ovr:data:opt;"
+                 "output:data:opt;"
+                 "input:data:opt;"
+                 "tfmIn:data:opt;"
+                 "mkvOut:data:opt;"
+                 "nt:int:opt;"
+                 "blockx:int:opt;"
+                 "blocky:int:opt;"
+                 "debug:int:opt;"
+                 "display:int:opt;"
+                 "vfrDec:int:opt;"
+                 "batch:int:opt;"
+                 "tcfv1:int:opt;"
+                 "se:int:opt;"
+                 "chroma:int:opt;"
+                 "exPP:int:opt;"
+                 "maxndl:int:opt;"
+                 "m2PA:int:opt;"
+                 "denoise:int:opt;"
+                 "noblend:int:opt;"
+                 "ssd:int:opt;"
+                 "hint:int:opt;"
+                 "clip2:clip:opt;"
+                 "sdlim:int:opt;"
+                 "opt:int:opt;"
+                 "orgOut:data:opt;"
+                 , tdecimateCreate, nullptr, plugin);
 }
-
-
-//AVSValue __cdecl Create_TFM(AVSValue args, void* user_data, IScriptEnvironment* env);
-//AVSValue __cdecl Create_TDecimate(AVSValue args, void* user_data, IScriptEnvironment* env);
-//AVSValue __cdecl Create_MergeHints(AVSValue args, void* user_data, IScriptEnvironment* env);
-//AVSValue __cdecl Create_FieldDiff(AVSValue args, void* user_data, IScriptEnvironment* env);
-//AVSValue __cdecl Create_CFieldDiff(AVSValue args, void* user_data, IScriptEnvironment* env);
-//AVSValue __cdecl Create_FrameDiff(AVSValue args, void* user_data, IScriptEnvironment* env);
-//AVSValue __cdecl Create_CFrameDiff(AVSValue args, void* user_data, IScriptEnvironment* env);
-//AVSValue __cdecl Create_ShowCombedTIVTC(AVSValue args, void* user_data, IScriptEnvironment* env);
-//AVSValue __cdecl Create_IsCombedTIVTC(AVSValue args, void* user_data, IScriptEnvironment* env);
-//AVSValue __cdecl Create_RequestLinear(AVSValue args, void* user_data, IScriptEnvironment* env);
-
-//#ifdef AVISYNTH_PLUGIN_25
-//extern "C" __declspec(dllexport) const char* __stdcall AvisynthPluginInit2(IScriptEnvironment* env) {
-//#else
-/* New 2.6 requirement!!! */
-// Declare and initialise server pointers static storage.
-//const AVS_Linkage *AVS_linkage = 0;
-
-/* New 2.6 requirement!!! */
-// DLL entry point called from LoadPlugin() to setup a user plugin.
-//extern "C" __declspec(dllexport) const char* __stdcall
-//AvisynthPluginInit3(IScriptEnvironment* env, const AVS_Linkage* const vectors) {
-
-  /* New 2.6 requirment!!! */
-  // Save the server pointers.
-//  AVS_linkage = vectors;
-//#endif
-/*
-  env->AddFunction("TFM", "c[1order]i[2field]i[3mode]i[4PP]i[5ovr]s[6input]s[7output]s[8outputC]s" \
-    "[9debug]b[10display]b[11slow]i[12mChroma]b[13cNum]i[14cthresh]i[15MI]i" \
-    "[16chroma]b[17blockx]i[18blocky]i[19y0]i[20y1]i[21mthresh]i[22clip2]c[23d2v]s" \
-    "[24ovrDefault]i[25flags]i[26scthresh]f[27micout]i[28micmatching]i[29trimIn]s" \
-    "[30hint]b[31metric]i[32batch]b[33ubsco]b[34mmsco]b[35opt]i", Create_TFM, 0);
-  env->AddFunction("TDecimate", "c[mode]i[cycleR]i[cycle]i[rate]f[dupThresh]f[vidThresh]f" \
-    "[sceneThresh]f[hybrid]i[vidDetect]i[conCycle]i[conCycleTP]i" \
-    "[ovr]s[output]s[input]s[tfmIn]s[mkvOut]s[nt]i[blockx]i" \
-    "[blocky]i[debug]b[display]b[vfrDec]i[batch]b[tcfv1]b[se]b" \
-    "[chroma]b[exPP]b[maxndl]i[m2PA]b[denoise]b[noblend]b[ssd]b" \
-    "[hint]b[clip2]c[sdlim]i[opt]i[orgOut]s", Create_TDecimate, 0);
-  env->AddFunction("MergeHints", "c[hintClip]c[debug]b", Create_MergeHints, 0);
-  env->AddFunction("FieldDiff", "c[nt]i[chroma]b[display]b[debug]b[sse]b[opt]i",
-    Create_FieldDiff, 0);
-  env->AddFunction("CFieldDiff", "c[nt]i[chroma]b[debug]b[sse]b[opt]i", Create_CFieldDiff, 0);
-  env->AddFunction("FrameDiff", "c[mode]i[prevf]b[nt]i[blockx]i[blocky]i[chroma]b[thresh]f" \
-    "[display]i[debug]b[norm]b[denoise]b[ssd]b[opt]i", Create_FrameDiff, 0);
-  env->AddFunction("CFrameDiff", "c[mode]i[prevf]b[nt]i[blockx]i[blocky]i[chroma]b[debug]b" \
-    "[norm]b[denoise]b[ssd]b[rpos]b[opt]i", Create_CFrameDiff, 0);
-  env->AddFunction("ShowCombedTIVTC", "c[cthresh]i[chroma]b[MI]i[blockx]i[blocky]i[metric]i" \
-    "[debug]b[display]i[fill]b[opt]i", Create_ShowCombedTIVTC, 0);
-  env->AddFunction("IsCombedTIVTC", "c[cthresh]i[MI]i[chroma]b[blockx]i[blocky]i[metric]i" \
-    "[opt]i", Create_IsCombedTIVTC, 0);
-  env->AddFunction("RequestLinear", "c[rlim]i[clim]i[elim]i[rall]b[debug]b",
-  */
-//    Create_RequestLinear, 0);
-//  return 0;
-//}

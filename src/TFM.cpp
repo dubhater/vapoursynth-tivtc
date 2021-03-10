@@ -159,7 +159,7 @@ const VSFrameRef *TFM::GetFrame(int n, int activationReason, VSFrameContext *fra
 //        OutputDebugString(buf);
 //      }
 //    }
-    if (usehints || PP >= 2) putProperties(dst, fmatch, combed, d2vfilm, mics);
+    if (usehints || PP >= 2) putFrameProperties(dst, fmatch, combed, d2vfilm, mics);
     lastMatch.frame = n;
     lastMatch.match = fmatch;
     lastMatch.field = field;
@@ -507,7 +507,7 @@ d2vCJump:
 //      OutputDebugString(buf);
 //    }
 //  }
-  if (usehints || PP >= 2) putProperties(dst, fmatch, combed, d2vfilm, mics);
+  if (usehints || PP >= 2) putFrameProperties(dst, fmatch, combed, d2vfilm, mics);
   lastMatch.frame = n;
   lastMatch.match = fmatch;
   lastMatch.field = field;
@@ -2617,13 +2617,13 @@ void TFM::createWeaveFrame(VSFrameRef *dst, const VSFrameRef *prv, const VSFrame
   cfrm = match;
 }
 
-void TFM::putProperties(VSFrameRef *dst, int match, int combed, bool d2vfilm, const int mics[5]) const
+void TFM::putFrameProperties(VSFrameRef *dst, int match, int combed, bool d2vfilm, const int mics[5]) const
 {
     VSMap *props = vsapi->getFramePropsRW(dst);
 
     vsapi->propSetInt(props, PROP_TFMMATCH, match, paReplace);
     vsapi->propSetInt(props, PROP_Combed, combed > 1, paReplace);
-    vsapi->propSetInt(props, PROP_D2VFilm, d2vfilm, paReplace);
+    vsapi->propSetInt(props, PROP_TFMD2VFilm, d2vfilm, paReplace);
     vsapi->propSetInt(props, PROP_TFMField, field, paReplace);
     for (int i = 0; i < 5; i++)
         vsapi->propSetInt(props, PROP_TFMMics, mics[i], i ? paAppend : paReplace);
@@ -2758,7 +2758,6 @@ TFM::TFM(VSNodeRef *_child, int _order, int _field, int _mode, int _PP, const ch
   int countOvrS, countOvrM;
   char linein[1024];
   char *linep, *linet;
-//  FILE *f = nullptr;
   std::unique_ptr<FILE, decltype (&fclose)> f(nullptr, nullptr);
 
 

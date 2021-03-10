@@ -130,7 +130,7 @@ static void blend_uint16_SSE4(uint8_t* dstp, const uint8_t* srcp1, const uint8_t
   auto max_pixel_value_128 = _mm_set1_epi16((short)max_pixel_value);
 
   for (int y = 0; y < height; y++) {
-    for (int x = 0; x < width * sizeof(uint16_t); x += 16) {
+    for (int x = 0; x < width * (int)sizeof(uint16_t); x += 16) {
       auto src1 = _mm_load_si128(reinterpret_cast<const __m128i*>(srcp1 + x));
       auto src2 = _mm_load_si128(reinterpret_cast<const __m128i*>(srcp2 + x));
 
@@ -170,10 +170,10 @@ static void blend_uint16_SSE4(uint8_t* dstp, const uint8_t* srcp1, const uint8_t
 // handles 50% special case as well
 // hbd ready
 void dispatch_blend(uint8_t* dstp, const uint8_t* srcp1, const uint8_t* srcp2, int width, int height,
-  int dst_pitch, int src1_pitch, int src2_pitch, int weight_i, int bits_per_pixel, int cpuFlags)
+  int dst_pitch, int src1_pitch, int src2_pitch, int weight_i, int bits_per_pixel, const CPUFeatures *cpuFlags)
 {
-  const bool use_sse2 = cpuFlags & CPUF_SSE2;
-  const bool use_sse4 = cpuFlags & CPUF_SSE4_1;
+  const bool use_sse2 = cpuFlags->sse2;
+  const bool use_sse4 = cpuFlags->sse4_1;
 
   // weight_i 0 and max --> copy is already handled!
   // weight_i is of 15 bit scale
@@ -1052,16 +1052,17 @@ void VerticalBlurSSE2_R(const uint8_t *srcp, uint8_t *dstp,
 // true SAD false SSD
 template<bool SAD>
 static void calcDiff_SADorSSD_32x32_SSE2(const uint8_t* ptr1, const uint8_t* ptr2,
-  int pitch1, int pitch2, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, const VideoInfo& vi)
+  int pitch1, int pitch2, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, const VSVideoInfo *vi)
 {
+    (void)chroma;
+
   int temp1, temp2, y, x, u, difft, box1, box2;
   int widtha, heighta, heights = height, widths = width;
   const uint8_t* ptr1T, * ptr2T;
-  if (!vi.IsYUY2())
-  {
+
     // from YV12 to generic planar
-    const int xsubsampling = vi.GetPlaneWidthSubsampling(plane);
-    const int ysubsampling = vi.GetPlaneHeightSubsampling(plane);
+    const int xsubsampling = plane == 0 ? 0 : vi->format->subSamplingW;
+    const int ysubsampling = plane == 0 ? 0 : vi->format->subSamplingH;
     // base: luma: 16x16, chroma: divided with subsampling
     const int w_to_shift = 4 - xsubsampling;
     const int h_to_shift = 4 - ysubsampling;
@@ -1164,158 +1165,16 @@ static void calcDiff_SADorSSD_32x32_SSE2(const uint8_t* ptr1, const uint8_t* ptr
       ptr1 += pitch1;
       ptr2 += pitch2;
     }
-    // planar (was: YV12)
-  }
-  else // YUY2
-  {
-    heighta = (height >> 4) << 4;
-    widtha = (width >> 5) << 5;
-    height >>= 4;
-    width >>= 5;
-    if (chroma)
-    {
-      // YUY2 common luma chroma
-      for (y = 0; y < height; ++y)
-      {
-        temp1 = (y >> 1) * xblocks4;
-        temp2 = ((y + 1) >> 1) * xblocks4;
-        for (x = 0; x < width; ++x)
-        {
-          if constexpr (SAD)
-            calcSAD_SSE2_32x16(ptr1 + (x << 5), ptr2 + (x << 5), pitch1, pitch2, difft);
-          else
-            calcSSD_SSE2_32x16(ptr1 + (x << 5), ptr2 + (x << 5), pitch1, pitch2, difft);
-          box1 = (x >> 1) << 2;
-          box2 = ((x + 1) >> 1) << 2;
-          diff[temp1 + box1 + 0] += difft;
-          diff[temp1 + box2 + 1] += difft;
-          diff[temp2 + box1 + 2] += difft;
-          diff[temp2 + box2 + 3] += difft;
-        }
-        for (x = widtha; x < widths; ++x)
-        {
-          ptr1T = ptr1;
-          ptr2T = ptr2;
-          for (difft = 0, u = 0; u < 16; ++u)
-          {
-            if constexpr (SAD)
-              difft += abs(ptr1T[x] - ptr2T[x]);
-            else
-              difft += (ptr1T[x] - ptr2T[x]) * (ptr1T[x] - ptr2T[x]);
-            ptr1T += pitch1;
-            ptr2T += pitch2;
-          }
-          box1 = (x >> 6) << 2;
-          box2 = ((x + 32) >> 6) << 2;
-          diff[temp1 + box1 + 0] += difft;
-          diff[temp1 + box2 + 1] += difft;
-          diff[temp2 + box1 + 2] += difft;
-          diff[temp2 + box2 + 3] += difft;
-        }
-        // 16 vertical lines at a time
-        ptr1 += pitch1 << 4;
-        ptr2 += pitch2 << 4;
-      }
-      for (y = heighta; y < heights; ++y)
-      {
-        temp1 = (y >> 5) * xblocks4;
-        temp2 = ((y + 16) >> 5) * xblocks4;
-        for (x = 0; x < widths; ++x)
-        {
-          if constexpr (SAD)
-            difft = abs(ptr1[x] - ptr2[x]);
-          else {
-            difft = ptr1[x] - ptr2[x];
-            difft *= difft;
-          }
-          box1 = (x >> 6) << 2;
-          box2 = ((x + 32) >> 6) << 2;
-          diff[temp1 + box1 + 0] += difft;
-          diff[temp1 + box2 + 1] += difft;
-          diff[temp2 + box1 + 2] += difft;
-          diff[temp2 + box2 + 3] += difft;
-        }
-        ptr1 += pitch1;
-        ptr2 += pitch2;
-      }
-    }
-    else
-    {
-      for (y = 0; y < height; ++y)
-      {
-        temp1 = (y >> 1) * xblocks4;
-        temp2 = ((y + 1) >> 1) * xblocks4;
-        for (x = 0; x < width; ++x)
-        {
-          if constexpr (SAD)
-            calcSAD_SSE2_32x16_YUY2_lumaonly(ptr1 + (x << 5), ptr2 + (x << 5), pitch1, pitch2, difft);
-          else
-            calcSSD_SSE2_32x16_YUY2_lumaonly(ptr1 + (x << 5), ptr2 + (x << 5), pitch1, pitch2, difft);
-          box1 = (x >> 1) << 2;
-          box2 = ((x + 1) >> 1) << 2;
-          diff[temp1 + box1 + 0] += difft;
-          diff[temp1 + box2 + 1] += difft;
-          diff[temp2 + box1 + 2] += difft;
-          diff[temp2 + box2 + 3] += difft;
-        }
-        for (x = widtha; x < widths; x += 2)
-        {
-          ptr1T = ptr1;
-          ptr2T = ptr2;
-          for (difft = 0, u = 0; u < 16; ++u)
-          {
-            if constexpr (SAD)
-              difft += abs(ptr1T[x] - ptr2T[x]);
-            else
-              difft += (ptr1T[x] - ptr2T[x]) * (ptr1T[x] - ptr2T[x]);
-            ptr1T += pitch1;
-            ptr2T += pitch2;
-          }
-          box1 = (x >> 6) << 2;
-          box2 = ((x + 32) >> 6) << 2;
-          diff[temp1 + box1 + 0] += difft;
-          diff[temp1 + box2 + 1] += difft;
-          diff[temp2 + box1 + 2] += difft;
-          diff[temp2 + box2 + 3] += difft;
-        }
-        // 16 vertical lines at a time
-        ptr1 += pitch1 << 4;
-        ptr2 += pitch2 << 4;
-      }
-      for (y = heighta; y < heights; ++y)
-      {
-        temp1 = (y >> 5) * xblocks4;
-        temp2 = ((y + 16) >> 5) * xblocks4;
-        for (x = 0; x < widths; x += 2)
-        {
-          if constexpr (SAD)
-            difft = abs(ptr1[x] - ptr2[x]);
-          else {
-            difft = ptr1[x] - ptr2[x];
-            difft *= difft;
-          }
-          box1 = (x >> 6) << 2;
-          box2 = ((x + 32) >> 6) << 2;
-          diff[temp1 + box1 + 0] += difft;
-          diff[temp1 + box2 + 1] += difft;
-          diff[temp2 + box1 + 2] += difft;
-          diff[temp2 + box2 + 3] += difft;
-        }
-        ptr1 += pitch1;
-        ptr2 += pitch2;
-      }
-    }
-  }
 }
 
 void calcDiffSAD_32x32_SSE2(const uint8_t* ptr1, const uint8_t* ptr2,
-  int pitch1, int pitch2, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, const VideoInfo& vi)
+  int pitch1, int pitch2, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, const VSVideoInfo *vi)
 {
   calcDiff_SADorSSD_32x32_SSE2<true>(ptr1, ptr2, pitch1, pitch2, width, height, plane, xblocks4, diff, chroma, vi);
 }
 
 void calcDiffSSD_32x32_SSE2(const uint8_t* ptr1, const uint8_t* ptr2,
-  int pitch1, int pitch2, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, const VideoInfo& vi)
+  int pitch1, int pitch2, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, const VSVideoInfo *vi)
 {
   calcDiff_SADorSSD_32x32_SSE2<false>(ptr1, ptr2, pitch1, pitch2, width, height, plane, xblocks4, diff, chroma, vi);
 }
@@ -1324,18 +1183,19 @@ void calcDiffSSD_32x32_SSE2(const uint8_t* ptr1, const uint8_t* ptr2,
 // true: SAD, false: SSD
 template<bool SAD>
 void calcDiff_SADorSSD_Generic_SSE2(const uint8_t* ptr1, const uint8_t* ptr2,
-  int pitch1, int pitch2, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, int xshiftS, int yshiftS, int xhalfS, int yhalfS, const VideoInfo& vi)
+  int pitch1, int pitch2, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, int xshiftS, int yshiftS, int xhalfS, int yhalfS, const VSVideoInfo *vi)
 {
+    (void)chroma;
+
   int temp1, temp2, y, x, u, difft, box1, box2;
   int yshift, yhalf, xshift, xhalf;
   int heighta, heights = height, widtha, widths = width;
   int yshifta, yhalfa, xshifta, xhalfa;
   const uint8_t* ptr1T, * ptr2T;
-  if (!vi.IsYUY2()) // YV12, YV16, YV24
-  {
+
     // from YV12 to generic planar
-    const int xsubsampling = vi.GetPlaneWidthSubsampling(plane);
-    const int ysubsampling = vi.GetPlaneHeightSubsampling(plane);
+    const int xsubsampling = plane == 0 ? 0 : vi->format->subSamplingW;
+    const int ysubsampling = plane == 0 ? 0 : vi->format->subSamplingH;
     // base: luma: 8x8, chroma: divided with subsampling
     const int w_to_shift = 3 - xsubsampling;
     const int h_to_shift = 3 - ysubsampling;
@@ -1439,170 +1299,16 @@ void calcDiff_SADorSSD_Generic_SSE2(const uint8_t* ptr1, const uint8_t* ptr2,
       ptr2 += pitch2;
     }
     // end of YV12 / planar
-  }
-  else // YUY2
-  {
-    heighta = (height >> 3) << 3;
-    widtha = (width >> 3) << 3;
-    height >>= 3;
-    width >>= 3;
-    yshifta = yshiftS;
-    yhalfa = yhalfS;
-    xshifta = xshiftS + 1;
-    xhalfa = xhalfS << 1;
-    yshift = yshiftS - 3;
-    yhalf = yhalfS >> 3;
-    xshift = xshiftS - 2;
-    xhalf = xhalfS >> 2;
-    if (chroma) // luma-chroma together
-    {
-      for (y = 0; y < height; ++y)
-      {
-        temp1 = (y >> yshift) * xblocks4;
-        temp2 = ((y + yhalf) >> yshift) * xblocks4;
-        for (x = 0; x < width; ++x)
-        {
-          if constexpr (SAD)
-            calcSAD_SSE2_8xN<8>(ptr1 + (x << 3), ptr2 + (x << 3), pitch1, pitch2, difft);
-          else
-            calcSSD_SSE2_8xN<8>(ptr1 + (x << 3), ptr2 + (x << 3), pitch1, pitch2, difft);
-
-          box1 = (x >> xshift) << 2;
-          box2 = ((x + xhalf) >> xshift) << 2;
-          diff[temp1 + box1 + 0] += difft;
-          diff[temp1 + box2 + 1] += difft;
-          diff[temp2 + box1 + 2] += difft;
-          diff[temp2 + box2 + 3] += difft;
-        }
-        for (x = widtha; x < widths; ++x)
-        {
-          ptr1T = ptr1;
-          ptr2T = ptr2;
-          for (difft = 0, u = 0; u < 8; ++u)
-          {
-            if constexpr (SAD)
-              difft += abs(ptr1T[x] - ptr2T[x]);
-            else
-              difft += (ptr1T[x] - ptr2T[x]) * (ptr1T[x] - ptr2T[x]);
-            ptr1T += pitch1;
-            ptr2T += pitch2;
-          }
-          box1 = (x >> xshifta) << 2;
-          box2 = ((x + xhalfa) >> xshifta) << 2;
-          diff[temp1 + box1 + 0] += difft;
-          diff[temp1 + box2 + 1] += difft;
-          diff[temp2 + box1 + 2] += difft;
-          diff[temp2 + box2 + 3] += difft;
-        }
-        // 8 lines
-        ptr1 += pitch1 << 3;
-        ptr2 += pitch2 << 3;
-      }
-      for (y = heighta; y < heights; ++y)
-      {
-        temp1 = (y >> yshifta) * xblocks4;
-        temp2 = ((y + yhalfa) >> yshifta) * xblocks4;
-        for (x = 0; x < widths; ++x)
-        {
-          if constexpr (SAD)
-            difft = abs(ptr1[x] - ptr2[x]);
-          else {
-            difft = ptr1[x] - ptr2[x];
-            difft *= difft;
-          }
-          box1 = (x >> xshifta) << 2;
-          box2 = ((x + xhalfa) >> xshifta) << 2;
-          diff[temp1 + box1 + 0] += difft;
-          diff[temp1 + box2 + 1] += difft;
-          diff[temp2 + box1 + 2] += difft;
-          diff[temp2 + box2 + 3] += difft;
-        }
-        ptr1 += pitch1;
-        ptr2 += pitch2;
-      }
-    }
-    else
-    {
-      // YUY2 luma only: chroma is masked out. Function names ending with _Luma do this.
-      for (y = 0; y < height; ++y)
-      {
-        temp1 = (y >> yshift) * xblocks4;
-        temp2 = ((y + yhalf) >> yshift) * xblocks4;
-        for (x = 0; x < width; ++x)
-        {
-          if constexpr (SAD)
-            calcSAD_SSE2_8x8_YUY2_lumaonly(ptr1 + (x << 3), ptr2 + (x << 3), pitch1, pitch2, difft);
-          else
-            calcSSD_SSE2_8x8_YUY2_lumaonly(ptr1 + (x << 3), ptr2 + (x << 3), pitch1, pitch2, difft);
-
-
-          box1 = (x >> xshift) << 2;
-          box2 = ((x + xhalf) >> xshift) << 2;
-          diff[temp1 + box1 + 0] += difft;
-          diff[temp1 + box2 + 1] += difft;
-          diff[temp2 + box1 + 2] += difft;
-          diff[temp2 + box2 + 3] += difft;
-        }
-        for (x = widtha; x < widths; x += 2)
-        {
-          ptr1T = ptr1;
-          ptr2T = ptr2;
-          for (difft = 0, u = 0; u < 8; ++u)
-          {
-            if constexpr (SAD)
-              difft += abs(ptr1T[x] - ptr2T[x]);
-            else
-              difft += (ptr1T[x] - ptr2T[x]) * (ptr1T[x] - ptr2T[x]);
-
-            ptr1T += pitch1;
-            ptr2T += pitch2;
-          }
-          box1 = (x >> xshifta) << 2;
-          box2 = ((x + xhalfa) >> xshifta) << 2;
-          diff[temp1 + box1 + 0] += difft;
-          diff[temp1 + box2 + 1] += difft;
-          diff[temp2 + box1 + 2] += difft;
-          diff[temp2 + box2 + 3] += difft;
-        }
-        // 8 lines
-        ptr1 += pitch1 << 3;
-        ptr2 += pitch2 << 3;
-      }
-      for (y = heighta; y < heights; ++y)
-      {
-        temp1 = (y >> yshifta) * xblocks4;
-        temp2 = ((y + yhalfa) >> yshifta) * xblocks4;
-        for (x = 0; x < widths; x += 2)
-        {
-          if constexpr (SAD)
-            difft = abs(ptr1[x] - ptr2[x]);
-          else {
-            difft = ptr1[x] - ptr2[x];
-            difft *= difft;
-          }
-
-          box1 = (x >> xshifta) << 2;
-          box2 = ((x + xhalfa) >> xshifta) << 2;
-          diff[temp1 + box1 + 0] += difft;
-          diff[temp1 + box2 + 1] += difft;
-          diff[temp2 + box1 + 2] += difft;
-          diff[temp2 + box2 + 3] += difft;
-        }
-        ptr1 += pitch1;
-        ptr2 += pitch2;
-      }
-    }
-  }
 }
 
 void calcDiffSAD_Generic_SSE2(const uint8_t* ptr1, const uint8_t* ptr2,
-  int pitch1, int pitch2, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, int xshiftS, int yshiftS, int xhalfS, int yhalfS, const VideoInfo& vi)
+  int pitch1, int pitch2, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, int xshiftS, int yshiftS, int xhalfS, int yhalfS, const VSVideoInfo *vi)
 {
   calcDiff_SADorSSD_Generic_SSE2<true>(ptr1, ptr2, pitch1, pitch2, width, height, plane, xblocks4, diff, chroma, xshiftS, yshiftS, xhalfS, yhalfS, vi);
 }
 
 void calcDiffSSD_Generic_SSE2(const uint8_t* ptr1, const uint8_t* ptr2,
-  int pitch1, int pitch2, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, int xshiftS, int yshiftS, int xhalfS, int yhalfS, const VideoInfo& vi)
+  int pitch1, int pitch2, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, int xshiftS, int yshiftS, int xhalfS, int yhalfS, const VSVideoInfo *vi)
 {
   calcDiff_SADorSSD_Generic_SSE2<false>(ptr1, ptr2, pitch1, pitch2, width, height, plane, xblocks4, diff, chroma, xshiftS, yshiftS, xhalfS, yhalfS, vi);
 }
@@ -1614,8 +1320,10 @@ template<typename pixel_t, bool SAD, int inc>
 void calcDiff_SADorSSD_Generic_c(const pixel_t* prvp, const pixel_t* curp,
   int prv_pitch, int cur_pitch, int width, int height, int plane, int xblocks4, uint64_t* diff,
   bool chroma, int xshiftS, int yshiftS, int xhalfS, int yhalfS, int nt,
-  const VideoInfo& vi)
+  const VSVideoInfo *vi)
 {
+    (void)chroma;
+
   int temp1, temp2, u;
 
   // 16 bits SSD requires int64 intermediate
@@ -1628,24 +1336,16 @@ void calcDiff_SADorSSD_Generic_c(const pixel_t* prvp, const pixel_t* curp,
   int heighta, widtha;
   const pixel_t* prvpT, * curpT;
 
-  const int bits_per_pixel = vi.BitsPerComponent();
+  const int bits_per_pixel = vi->format->bitsPerSample;
   const int shift_count = SAD ? (bits_per_pixel - 8) : 2 * (bits_per_pixel - 8);
 
-  if (!vi.IsYUY2())
   {
-    const int ysubsampling = vi.GetPlaneHeightSubsampling(plane);
-    const int xsubsampling = vi.GetPlaneWidthSubsampling(plane);
+    const int ysubsampling = plane == 0 ? 0 : vi->format->subSamplingH;
+    const int xsubsampling = plane == 0 ? 0 : vi->format->subSamplingW;
     yshift = yshiftS - ysubsampling;
     yhalf = yhalfS >> ysubsampling;
     xshift = xshiftS - xsubsampling;
     xhalf = xhalfS >> xsubsampling;
-  }
-  else {
-    // YUY2
-    yshift = yshiftS;
-    yhalf = yhalfS;
-    xshift = xshiftS + 1;
-    xhalf = xhalfS << 1;
   }
 
   heighta = (height >> (yshift - 1)) << (yshift - 1);
@@ -1751,17 +1451,17 @@ void calcDiff_SADorSSD_Generic_c(const pixel_t* prvp, const pixel_t* curp,
 
 // instantiate
 template void calcDiff_SADorSSD_Generic_c<uint8_t, false, 1>(const uint8_t* prvp, const uint8_t* curp,
-  int prv_pitch, int cur_pitch, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, int xshiftS, int yshiftS, int xhalfS, int yhalfS, int nt, const VideoInfo& vi);
+  int prv_pitch, int cur_pitch, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, int xshiftS, int yshiftS, int xhalfS, int yhalfS, int nt, const VSVideoInfo *vi);
 template void calcDiff_SADorSSD_Generic_c<uint8_t, false, 2>(const uint8_t* prvp, const uint8_t* curp,
-  int prv_pitch, int cur_pitch, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, int xshiftS, int yshiftS, int xhalfS, int yhalfS, int nt, const VideoInfo& vi);
+  int prv_pitch, int cur_pitch, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, int xshiftS, int yshiftS, int xhalfS, int yhalfS, int nt, const VSVideoInfo *vi);
 template void calcDiff_SADorSSD_Generic_c<uint8_t, true, 1>(const uint8_t* prvp, const uint8_t* curp,
-  int prv_pitch, int cur_pitch, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, int xshiftS, int yshiftS, int xhalfS, int yhalfS, int nt, const VideoInfo& vi);
+  int prv_pitch, int cur_pitch, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, int xshiftS, int yshiftS, int xhalfS, int yhalfS, int nt, const VSVideoInfo *vi);
 template void calcDiff_SADorSSD_Generic_c<uint8_t, true, 2>(const uint8_t* prvp, const uint8_t* curp,
-  int prv_pitch, int cur_pitch, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, int xshiftS, int yshiftS, int xhalfS, int yhalfS, int nt, const VideoInfo& vi);
+  int prv_pitch, int cur_pitch, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, int xshiftS, int yshiftS, int xhalfS, int yhalfS, int nt, const VSVideoInfo *vi);
 
 template void calcDiff_SADorSSD_Generic_c<uint16_t, false, 1>(const uint16_t* prvp, const uint16_t* curp,
-  int prv_pitch, int cur_pitch, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, int xshiftS, int yshiftS, int xhalfS, int yhalfS, int nt, const VideoInfo& vi);
+  int prv_pitch, int cur_pitch, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, int xshiftS, int yshiftS, int xhalfS, int yhalfS, int nt, const VSVideoInfo *vi);
 template void calcDiff_SADorSSD_Generic_c<uint16_t, true, 1>(const uint16_t* prvp, const uint16_t* curp,
-  int prv_pitch, int cur_pitch, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, int xshiftS, int yshiftS, int xhalfS, int yhalfS, int nt, const VideoInfo& vi);
+  int prv_pitch, int cur_pitch, int width, int height, int plane, int xblocks4, uint64_t* diff, bool chroma, int xshiftS, int yshiftS, int xhalfS, int yhalfS, int nt, const VSVideoInfo *vi);
 
 
