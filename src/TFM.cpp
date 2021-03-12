@@ -2918,7 +2918,7 @@ TFM::TFM(VSNodeRef *_child, int _order, int _field, int _mode, int _PP, const ch
   if (input.size())
   {
     bool d2vmarked, micmarked;
-    if ((f = decltype (f)(fopen(input.c_str(), "r"), &fclose)) != nullptr)
+    if ((f = decltype (f)(tivtc_fopen(input.c_str(), "r"), &fclose)) != nullptr)
     {
       ovrArray.resize(vi->numFrames, 255);
 
@@ -3072,7 +3072,7 @@ TFM::TFM(VSNodeRef *_child, int _order, int _field, int _mode, int _PP, const ch
   }
   if (ovr.size())
   {
-    if ((f = decltype (f)(fopen(ovr.c_str(), "r"), &fclose)) != nullptr)
+    if ((f = decltype (f)(tivtc_fopen(ovr.c_str(), "r"), &fclose)) != nullptr)
     {
       countOvrS = countOvrM = 0;
       while (fgets(linein, 1024, f.get()) != nullptr)
@@ -3128,7 +3128,7 @@ TFM::TFM(VSNodeRef *_child, int _order, int _field, int _mode, int _PP, const ch
       fieldt = fieldO;
       firstLine = 0;
       i = 0;
-      if ((f = decltype (f)(fopen(ovr.c_str(), "r"), &fclose)) != nullptr)
+      if ((f = decltype (f)(tivtc_fopen(ovr.c_str(), "r"), &fclose)) != nullptr)
       {
 //        if (debug)
 //        {
@@ -3496,7 +3496,7 @@ TFM::TFM(VSNodeRef *_child, int _order, int _field, int _mode, int _PP, const ch
 emptyovr:
   if (output.size())
   {
-    if ((f = decltype (f)(fopen(output.c_str(), "w"), &fclose)) != nullptr)
+    if ((f = decltype (f)(tivtc_fopen(output.c_str(), "w"), &fclose)) != nullptr)
     {
       _fullpath(outputFull, output.c_str(), MAX_PATH);
       calcCRC(child, 15, outputCrc, vsapi);
@@ -3514,7 +3514,7 @@ emptyovr:
   }
   if (outputC.size())
   {
-    if ((f = decltype (f)(fopen(outputC.c_str(), "w"), &fclose)) != nullptr)
+    if ((f = decltype (f)(tivtc_fopen(outputC.c_str(), "w"), &fclose)) != nullptr)
     {
       _fullpath(outputCFull, outputC.c_str(), MAX_PATH);
       if (outArray.size() == 0)
@@ -3540,7 +3540,7 @@ TFM::~TFM()
     FILE *f = nullptr;
     if (output.size())
     {
-      if ((f = fopen(outputFull, "w")) != nullptr)
+      if ((f = tivtc_fopen(outputFull, "w")) != nullptr)
       {
         char tempBuf[40], tb2[40];
         int match, sn = micout == 1 ? 3 : 5;
@@ -3592,7 +3592,7 @@ TFM::~TFM()
     }
     if (outputC.size())
     {
-      if ((f = fopen(outputCFull, "w")) != nullptr)
+      if ((f = tivtc_fopen(outputCFull, "w")) != nullptr)
       {
         int count = 0, match;
         fprintf(f, "#TFM %s by tritical\n", VERSION);

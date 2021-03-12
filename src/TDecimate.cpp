@@ -2554,7 +2554,7 @@ void TDecimate::init_mode_5(VSCore *core) {
 twopassrun:
   ++passThrough;
 #if 0
-  if ((f = fopen("debug.txt", "a")) != nullptr) {
+  if ((f = tivtc_fopen("debug.txt", "a")) != nullptr) {
     fprintf(f, "passThrough=%d cycle=%d nfrms=%d vidThresh=%f np=%d\n", passThrough, cycle, nfrms, (float)vidThresh, np);
     fclose(f);
     f = nullptr;
@@ -2634,7 +2634,7 @@ twopassrun:
             input_magic_numbers[i] = 2;
             ++count;
 #if 0
-            if ((f = fopen("debug.txt", "a")) != nullptr) {
+            if ((f = tivtc_fopen("debug.txt", "a")) != nullptr) {
               fprintf(f, "count=%03d b=%d w=%d i=%d \n", count, b, w, i);
               fclose(f);
               f = nullptr;
@@ -2687,7 +2687,7 @@ finishTP:
   }
 
 #if 0
-  if ((f = fopen("debug.txt", "a")) != nullptr) {
+  if ((f = tivtc_fopen("debug.txt", "a")) != nullptr) {
     fprintf(f, "new_num_frames=%d vi.numFrames=%d count=%d\n", vi.numFrames - count, vi.numFrames, count);
     fclose(f);
     f = nullptr;
@@ -2696,7 +2696,7 @@ finishTP:
 
   muldivRational(&vi.fpsNum, &vi.fpsDen, vi.numFrames - count, vi.numFrames);
   vi.numFrames = vi.numFrames - count;
-  if ((f = fopen(mkvOut.c_str(), "w")) != nullptr)
+  if ((f = tivtc_fopen(mkvOut.c_str(), "w")) != nullptr)
   {
     double timestamp = 0.0;
     double sample1 = 1000.0 / fps;
@@ -2824,7 +2824,7 @@ finishTP:
   {
     if (aLUT.empty())
       throw TIVTCError("TDecimate: aLUT is nullptr!");
-    FILE *orgOutF = fopen(orgOut.c_str(), "w");
+    FILE *orgOutF = tivtc_fopen(orgOut.c_str(), "w");
     if (orgOutF == nullptr)
       throw TIVTCError("TDecimate: cannot create orgOut file!");
     for (int n = 0; n<vi.numFrames; ++n)
@@ -3070,7 +3070,7 @@ TDecimate::TDecimate(VSNodeRef *_child, int _mode, int _cycleR, int _cycle, doub
   }
   if (output.size())
   {
-    if ((f = fopen(output.c_str(), "w")) != nullptr)
+    if ((f = tivtc_fopen(output.c_str(), "w")) != nullptr)
     {
       _fullpath(outputFull, output.c_str(), MAX_PATH);
       calcCRC(child, 15, outputCrc, vsapi);
@@ -3089,7 +3089,7 @@ TDecimate::TDecimate(VSNodeRef *_child, int _mode, int _cycleR, int _cycle, doub
       if (!batch || (mode != 5 && mode != 6)) metricsArray[h] = UINT64_MAX;
       else metricsArray[h] = 0;
     }
-    if ((f = fopen(input.c_str(), "r")) != nullptr)
+    if ((f = tivtc_fopen(input.c_str(), "r")) != nullptr)
     {
       uint64_t metricU, metricF;
       int w;
@@ -3230,7 +3230,7 @@ TDecimate::TDecimate(VSNodeRef *_child, int _mode, int _cycleR, int _cycle, doub
   }
   if (ovr.size())
   {
-    if ((f = fopen(ovr.c_str(), "r")) != nullptr)
+    if ((f = tivtc_fopen(ovr.c_str(), "r")) != nullptr)
     {
       if (ovrArray.empty())
       {
@@ -3415,7 +3415,7 @@ TDecimate::TDecimate(VSNodeRef *_child, int _mode, int _cycleR, int _cycle, doub
   if (tfmIn.size())
   {
     bool d2vmarked, micmarked;
-    if ((f = fopen(tfmIn.c_str(), "r")) != nullptr)
+    if ((f = tivtc_fopen(tfmIn.c_str(), "r")) != nullptr)
     {
       int fieldt, firstLine, z, q, r;
       if (ovrArray.empty())
@@ -3638,7 +3638,7 @@ TDecimate::TDecimate(VSNodeRef *_child, int _mode, int _cycleR, int _cycle, doub
     lastCycle = -cycle;
     retFrames = -200;
     lastType = linearCount = 0;
-    if ((mkvOutF = fopen(mkvOut.c_str(), "w")) != nullptr)
+    if ((mkvOutF = tivtc_fopen(mkvOut.c_str(), "w")) != nullptr)
     {
       if (tcfv1)
       {
@@ -3663,7 +3663,7 @@ TDecimate::TDecimate(VSNodeRef *_child, int _mode, int _cycleR, int _cycle, doub
     int j = 0, k = 0, dups;
     double timestamp = 0.0;
     int lastt = 0, lastf = 0;
-    if ((f = fopen(mkvOut.c_str(), "w")) == nullptr)
+    if ((f = tivtc_fopen(mkvOut.c_str(), "w")) == nullptr)
     {
       throw TIVTCError("TDecimate:  unable to create mkvOut file!");
     }
@@ -3838,7 +3838,7 @@ TDecimate::~TDecimate()
     if (output.size())
     {
       FILE *f = nullptr;
-      if ((f = fopen(outputFull, "w")) != nullptr)
+      if ((f = tivtc_fopen(outputFull, "w")) != nullptr)
       {
         uint64_t metricU, metricF;
         fprintf(f, "#TDecimate %s by tritical\n", VERSION);

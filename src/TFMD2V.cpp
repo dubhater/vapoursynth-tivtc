@@ -141,7 +141,7 @@ int TFM::fillTrimArray(int frames)
   }
   else
   {
-    std::unique_ptr<FILE, decltype (&fclose)> f(fopen(trimIn.c_str(), "r"), &fclose);
+    std::unique_ptr<FILE, decltype (&fclose)> f(tivtc_fopen(trimIn.c_str(), "r"), &fclose);
     if (f == nullptr) return 2;
     while (fgets(linein, 80, f.get()) != nullptr)
     {
@@ -302,7 +302,7 @@ int TFM::D2V_initialize_array(std::vector<int> &array, int &d2vtype, int &frames
   int num = 0, num2 = 0, pass = 1, val, D2Vformat;
   char line[1025], *p;
 pass2_start:
-  ind2v = decltype (ind2v)(fopen(d2v.c_str(), "r"), &fclose);
+  ind2v = decltype (ind2v)(tivtc_fopen(d2v.c_str(), "r"), &fclose);
   if (ind2v == nullptr) return 1;
   if (pass == 2)
   {
@@ -384,9 +384,9 @@ int TFM::D2V_write_array(const std::vector<int> &array, char wfile[]) const
 {
   int num = 0, D2Vformat, val;
   char line[1025], *p, tbuf[16];
-  std::unique_ptr<FILE, decltype (&fclose)> ind2v(fopen(d2v.c_str(), "r"), &fclose);
+  std::unique_ptr<FILE, decltype (&fclose)> ind2v(tivtc_fopen(d2v.c_str(), "r"), &fclose);
   if (ind2v == nullptr) return 1;
-  std::unique_ptr<FILE, decltype (&fclose)> outd2v(fopen(wfile, "w"), &fclose);
+  std::unique_ptr<FILE, decltype (&fclose)> outd2v(tivtc_fopen(wfile, "w"), &fclose);
   if (outd2v == nullptr) return 2;
   fgets(line, 1024, ind2v.get());
   D2Vformat = 0;
@@ -473,7 +473,7 @@ int TFM::D2V_get_output_filename(char wfile[]) const
   int inT = 1;
   while (checking && inT < 100)
   {
-    outd2v = fopen(wfile, "r");
+    outd2v = tivtc_fopen(wfile, "r");
     if (outd2v != nullptr)
     {
       fclose(outd2v);
@@ -505,10 +505,10 @@ int TFM::D2V_get_output_filename(char wfile[]) const
     }
     else checking = false;
   }
-  outd2v = fopen(wfile, "w");
+  outd2v = tivtc_fopen(wfile, "w");
   if (outd2v == nullptr) return 2;
   fclose(outd2v);
-  remove(wfile);
+//  remove(wfile); // What's the point of deleting it if you're just going to recreate it a few lines later?
   return 0;
 }
 

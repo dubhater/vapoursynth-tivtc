@@ -1880,7 +1880,7 @@ TFMPP::TFMPP(VSNodeRef *_child, int _PP, int _mthresh, const char* _ovr, bool _d
   i = 0;
   if (ovr.size())
   {
-    if ((f = decltype(f) (fopen(ovr.c_str(), "r"), &fclose)) != nullptr)
+    if ((f = decltype(f) (tivtc_fopen(ovr.c_str(), "r"), &fclose)) != nullptr)
     {
       countOvrS = 0;
       while (fgets(linein, 1024, f.get()) != nullptr)
@@ -1896,7 +1896,7 @@ TFMPP::TFMPP(VSNodeRef *_child, int _PP, int _mthresh, const char* _ovr, bool _d
       ++countOvrS;
       countOvrS *= 4;
       setArray.resize(countOvrS, 0xffffffff);
-      if ((f = decltype(f) (fopen(ovr.c_str(), "r"), &fclose)) != nullptr)
+      if ((f = decltype(f) (tivtc_fopen(ovr.c_str(), "r"), &fclose)) != nullptr)
       {
         while (fgets(linein, 1024, f.get()) != nullptr)
         {

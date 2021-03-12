@@ -2,6 +2,11 @@
 #define __Internal_H__
 
 #include <stdexcept>
+#include <cstring>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 // these settings control whether the included code comes from old asm or newer simd/C rewrites
 #define USE_C_NO_ASM
@@ -72,6 +77,23 @@ constexpr int ISD2VFILM = 0x00000080; // ovr array - bit 8
 #undef VERSION
 #endif
 #define VERSION "v1.0.7"
+
+
+static FILE *tivtc_fopen(const char *name, const char *mode) {
+#ifdef _WIN32
+    int len = MultiByteToWideChar(CP_UTF8, 0, name, -1, nullptr, 0);
+    std::wstring wname(len, 0);
+
+    int ret = MultiByteToWideChar(CP_UTF8, 0, name, -1, wname.data(), len);
+    if (ret == len) {
+        std::wstring wmode(mode, mode + strlen(mode));
+        return _wfopen(wname.c_str(), wmode.c_str());
+    } else
+        throw TIVTCError("Failed to convert file name to wide char.");
+#else
+    return fopen(name, mode);
+#endif
+}
 
 
 #endif  // __Internal_H__
