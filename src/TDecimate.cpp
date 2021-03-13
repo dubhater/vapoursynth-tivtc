@@ -137,6 +137,9 @@ const VSFrameRef * TDecimate::GetFrameMode01(int n, int activationReason, void *
       }
       vsapi->propSetInt(props, PROP_TDecimateOriginalFrame, o->f1, paReplace);
 
+      vsapi->propSetInt(props, PROP_DurationNum, vi.fpsDen, paReplace);
+      vsapi->propSetInt(props, PROP_DurationDen, vi.fpsNum, paReplace);
+
       delete o;
 
       return dst;
@@ -579,6 +582,23 @@ const VSFrameRef * TDecimate::GetFrameMode3(int n, int activationReason, void **
 
       if (display)
           displayOutput(dst, o->requested_frame_number, o->chosen_frame_number, o->film, o->a1, o->a2, o->f1, o->f2);
+
+      int64_t duration_num = vi.fpsDen;
+      int64_t duration_den = vi.fpsNum;
+
+      if (o->film) {
+          int mul = cycle;
+          int div = cycle - cycleR;
+          if (curr.blend == 3)
+              div--;
+
+          muldivRational(&duration_num, &duration_den, mul, div);
+      }
+
+      VSMap *props = vsapi->getFramePropsRW(dst);
+
+      vsapi->propSetInt(props, PROP_DurationNum, duration_num, paReplace);
+      vsapi->propSetInt(props, PROP_DurationDen, duration_den, paReplace);
 
       delete o;
 

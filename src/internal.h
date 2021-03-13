@@ -34,6 +34,8 @@
 #define PROP_TDecimateCycleStart "TDecimateCycleStart"
 #define PROP_TDecimateCycleMaxBlockDiff "TDecimateCycleMaxBlockDiff" // uint64_t[]
 #define PROP_TDecimateOriginalFrame "TDecimateOriginalFrame"
+#define PROP_DurationNum "_DurationNum"
+#define PROP_DurationDen "_DurationDen"
 
 class TIVTCError : public std::runtime_error {
     using std::runtime_error::runtime_error;
