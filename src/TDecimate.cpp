@@ -929,6 +929,8 @@ const VSFrameRef * TDecimate::GetFrameMode4(int n, int activationReason, VSFrame
 const VSFrameRef * TDecimate::GetFrameMode56(int n, int activationReason, VSFrameContext *frameCtx, VSCore *core)
 {
   int frame = aLUT[n];
+  int durNum = frame_duration_info[frame].first;
+  int durDen = frame_duration_info[frame].second;
 
   if (activationReason == arInitial) {
       vsapi->requestFrameFilter(frame, clip2, frameCtx);
@@ -946,11 +948,12 @@ const VSFrameRef * TDecimate::GetFrameMode56(int n, int activationReason, VSFram
 //    OutputDebugString(buf);
 //  }
 
+  VSFrameRef *dst = vsapi->copyFrame(src, core);
+  vsapi->freeFrame(src);
+  VSMap *props = vsapi->getFramePropsRW(dst);
+
   if (display)
   {
-    VSFrameRef *dst = vsapi->copyFrame(src, core);
-    vsapi->freeFrame(src);
-
 #define SZ 160
     char buf[SZ] = { 0 };
 
@@ -964,13 +967,13 @@ const VSFrameRef * TDecimate::GetFrameMode56(int n, int activationReason, VSFram
     snprintf(buf, SZ, "inframe = %d  useframe = %d\n", n, frame);
     text += buf;
 #undef SZ
-
-    VSMap *props = vsapi->getFramePropsRW(dst);
     vsapi->propSetData(props, PROP_TDecimateDisplay, text.c_str(), text.size(), paReplace);
-
-    return dst;
   }
-  return src;
+
+  vsapi->propSetInt(props, PROP_DurationNum, durNum, paReplace);
+  vsapi->propSetInt(props, PROP_DurationDen, durDen, paReplace);
+
+  return dst;
 }
 
 // PF 180131 uses usehints! but its runtime alreadz, no problem
@@ -2714,7 +2717,10 @@ finishTP:
   }
 #endif
 
-  muldivRational(&vi.fpsNum, &vi.fpsDen, vi.numFrames - count, vi.numFrames);
+  int fpsNum = vi.fpsNum;
+  int frameNum = vi.fpsDen;
+  vi.fpsNum = 0;
+  vi.fpsDen = 0;
   vi.numFrames = vi.numFrames - count;
   if ((f = tivtc_fopen(mkvOut.c_str(), "w")) != nullptr)
   {
@@ -2749,6 +2755,26 @@ finishTP:
         }
         else ++count;
       }
+      
+      int frameDen;
+      switch (ddup)
+      {
+          case 1:
+          frameDen = static_cast<int>(fpsNum * (cycle - cycleR) / cycle);
+          break;
+          case 2:
+          frameDen = static_cast<int>(fpsNum * (cycle - cycleR - 1) / cycle);
+          break;
+          default:
+          frameDen = fpsNum;
+          break;
+      }
+      for (int frm = b; frm < b + cycle; frm++)
+      {
+        frame_duration_info[frm].first = frameNum;
+        frame_duration_info[frm].second = frameDen;
+      }
+
       if (vid)
       {
         if (!tcfv1)
@@ -3680,7 +3706,7 @@ TDecimate::TDecimate(VSNodeRef *_child, int _mode, int _cycleR, int _cycle, doub
   {
     std::vector<int> input_magic_numbers(vi.numFrames, 0);
 
-    int j = 0, k = 0, dups;
+    int j = 0, k = 0, frm = 0, dups, frameDen;
     double timestamp = 0.0;
     int lastt = 0, lastf = 0;
     if ((f = tivtc_fopen(mkvOut.c_str(), "w")) == nullptr)
@@ -3695,6 +3721,9 @@ TDecimate::TDecimate(VSNodeRef *_child, int _mode, int _cycleR, int _cycle, doub
     else fprintf(f, "# timecode format v2\n");
     fprintf(f, "# TDecimate %s by tritical\n", VERSION);
     fprintf(f, "# Mode 6 - Auto-generated mkv timecodes file\n");
+    
+    vi.fpsNum = 0;
+    vi.fpsDen = 0;
     while (j < vi.numFrames)
     {
       dups = 1;
@@ -3721,6 +3750,7 @@ TDecimate::TDecimate(VSNodeRef *_child, int _mode, int _cycleR, int _cycle, doub
           }
           else if (lastt <= 0) lastt = 1;
           input_magic_numbers[j - 1] = 2;
+          frameDen = 120000;
           dups = 0;
           ++k;
         }
@@ -3739,6 +3769,7 @@ TDecimate::TDecimate(VSNodeRef *_child, int _mode, int _cycleR, int _cycle, doub
           }
           else if (lastt <= 0) lastt = 2;
           input_magic_numbers[j - 2] = 2;
+          frameDen = 60000;
           dups = 0;
           ++k;
         }
@@ -3757,6 +3788,7 @@ TDecimate::TDecimate(VSNodeRef *_child, int _mode, int _cycleR, int _cycle, doub
           }
           else if (lastt <= 0) lastt = 3;
           input_magic_numbers[j - 3] = 2;
+          frameDen = 40000;
           dups = 0;
           ++k;
         }
@@ -3780,6 +3812,7 @@ TDecimate::TDecimate(VSNodeRef *_child, int _mode, int _cycleR, int _cycle, doub
           else if (lastt <= 0) lastt = 4;
           k += (dups >> 2);
           for (int i = 0; i < dups; i += 4) input_magic_numbers[j - dups + i] = 2;
+          frameDen = 30000;
           dups = 0;
         }
         else if ((dups % 5) == 0) // 23.97602
@@ -3802,6 +3835,7 @@ TDecimate::TDecimate(VSNodeRef *_child, int _mode, int _cycleR, int _cycle, doub
           else if (lastt <= 0) lastt = 5;
           k += (dups / 5);
           for (int i = 0; i < dups; i += 5) input_magic_numbers[j - dups + i] = 2;
+          frameDen = 24000;
           dups = 0;
         }
         else if (dups > 5)
@@ -3820,8 +3854,15 @@ TDecimate::TDecimate(VSNodeRef *_child, int _mode, int _cycleR, int _cycle, doub
           else if (lastt <= 0) lastt = 5;
           input_magic_numbers[j - dups] = 2;
           dups -= 5;
+          frameDen = 24000;
           ++k;
         }
+      }
+      while (frm < j)
+      {
+        frame_duration_info[frm].first = 1001;
+        frame_duration_info[frm].second = frameDen;
+        ++frm;
       }
     }
     if (tcfv1 && lastt != 5) fprintf(f, "%d,%d,%s\n", lastf, k - 1, cfps(lastt));
