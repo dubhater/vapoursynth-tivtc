@@ -41,6 +41,7 @@
 #endif
 #include <memory>
 #include <vector>
+#include <unordered_map>
 #include <VapourSynth.h>
 #include <VSHelper.h>
 
@@ -146,6 +147,7 @@ private:
   std::unique_ptr<uint64_t, decltype (&vs_aligned_free)> diff;
   std::vector<uint64_t> metricsArray, metricsOutArray, mode2_metrics;
   std::vector<int> aLUT, mode2_decA, mode2_order;
+  std::unordered_map<int, std::pair<int, int>> frame_duration_info;
   unsigned int outputCrc;
   std::vector<uint8_t> ovrArray;
   int mode2_num, mode2_den, mode2_numCycles, mode2_cfs[10];
