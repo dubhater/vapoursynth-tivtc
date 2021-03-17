@@ -1197,7 +1197,7 @@ int TFM::compareFieldsSlow_core(const VSFrameRef *prv, const VSFrameRef *src, co
 {
     (void)n;
 
-  const int bits_per_pixel = vi->format->bytesPerSample;
+  const int bits_per_pixel = vi->format->bitsPerSample;
 
   int ret;
   int y0a, y1a;  // exclusion regio
