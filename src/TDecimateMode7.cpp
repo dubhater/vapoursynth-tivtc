@@ -146,10 +146,6 @@ const VSFrameRef * TDecimate::GetFrameMode7(int n, int activationReason, void **
 //    }
 //  }
 
-  enum {
-      RetFrameIsReady = 69,
-  };
-
   if (activationReason == arInitial || (activationReason == arAllFramesReady && (intptr_t)*frameData != RetFrameIsReady)) {
       vsapi->requestFrameFilter(ret, clip2, frameCtx);
       *frameData = (void *)RetFrameIsReady;
