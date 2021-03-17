@@ -2682,8 +2682,7 @@ void TFM::buildDiffMapPlane2(const uint8_t *prvp, const uint8_t *nxtp,
   uint8_t *dstp, int prv_pitch, int nxt_pitch, int dst_pitch, int Height,
   int Width, int bits_per_pixel) const
 {
-  const bool YUY2_LumaOnly = false && !mChroma;
-  do_buildABSDiffMask2<pixel_t>(prvp, nxtp, dstp, prv_pitch, nxt_pitch, dst_pitch, Width, Height, YUY2_LumaOnly, &cpuFlags, bits_per_pixel);
+  do_buildABSDiffMask2<pixel_t>(prvp, nxtp, dstp, prv_pitch, nxt_pitch, dst_pitch, Width, Height, &cpuFlags, bits_per_pixel);
 }
 
 // instantiate
@@ -2698,8 +2697,7 @@ template<typename pixel_t>
 void TFM::buildABSDiffMask(const uint8_t *prvp, const uint8_t *nxtp,
   int prv_pitch, int nxt_pitch, int tpitch, int width, int height) const
 {
-  const bool YUY2_LumaOnly = false && !mChroma;
-  do_buildABSDiffMask<pixel_t>(prvp, nxtp, tbuffer.get(), prv_pitch, nxt_pitch, tpitch, width, height, YUY2_LumaOnly, &cpuFlags);
+  do_buildABSDiffMask<pixel_t>(prvp, nxtp, tbuffer.get(), prv_pitch, nxt_pitch, tpitch, width, height, &cpuFlags);
 }
 
 // instantiate

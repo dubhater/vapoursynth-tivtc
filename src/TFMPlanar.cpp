@@ -137,7 +137,7 @@ void checkCombedPlanarAnalyze_core(const VSVideoInfo *vi, int cthresh, bool chro
       else if (use_sse4 && sizeof(pixel_t) == 2)
         check_combing_uint16_SSE4((const uint16_t*)srcp, cmkp, Width, lines_to_process, src_pitch, cmk_pitch, scaled_cthresh);
       else
-        check_combing_c<pixel_t, false>(srcp, cmkp, Width, lines_to_process, src_pitch, cmk_pitch, scaled_cthresh);
+        check_combing_c<pixel_t>(srcp, cmkp, Width, lines_to_process, src_pitch, cmk_pitch, scaled_cthresh);
       srcppp += src_pitch * lines_to_process;
       srcpp += src_pitch * lines_to_process;
       srcp += src_pitch * lines_to_process;
@@ -194,13 +194,13 @@ void checkCombedPlanarAnalyze_core(const VSVideoInfo *vi, int cthresh, bool chro
         if constexpr (sizeof(pixel_t) == 1)
           check_combing_SSE2_Metric1(srcp, cmkp, Width, lines_to_process, src_pitch, cmk_pitch, cthreshsq);
         else
-          check_combing_c_Metric1<pixel_t, false, safeint_t>(srcp, cmkp, Width, lines_to_process, src_pitch, cmk_pitch, cthreshsq);
+          check_combing_c_Metric1<pixel_t, safeint_t>(srcp, cmkp, Width, lines_to_process, src_pitch, cmk_pitch, cthreshsq);
         // fixme: write SIMD? later. int64 inside.
         // check_combing_uint16_SSE2_Metric1(srcp, cmkp, Width, lines_to_process, src_pitch, cmk_pitch, cthreshsq);
       }
       else
       {
-        check_combing_c_Metric1<pixel_t, false, safeint_t>(srcp, cmkp, Width, lines_to_process, src_pitch, cmk_pitch, cthreshsq);
+        check_combing_c_Metric1<pixel_t, safeint_t>(srcp, cmkp, Width, lines_to_process, src_pitch, cmk_pitch, cthreshsq);
       }
       srcpp += src_pitch * lines_to_process;
       srcp += src_pitch * lines_to_process;

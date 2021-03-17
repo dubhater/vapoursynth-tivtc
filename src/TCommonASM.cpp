@@ -178,31 +178,14 @@ void buildABSDiffMask_SSE2(const uint8_t* prvp, const uint8_t* nxtp,
 }
 
 
-template<typename pixel_t, bool YUY2_LumaOnly>
+template<typename pixel_t>
 void buildABSDiffMask_c(const uint8_t* prvp, const uint8_t* nxtp,
   uint8_t* dstp, int prv_pitch, int nxt_pitch, int dst_pitch, int width, int height)
 {
   if (width <= 0)
     return;
 
-  if constexpr (YUY2_LumaOnly) {
-    // 8 bit only
-    // C version is quicker if dealing with every second (luma) pixel
-    // SSE2: no luma-nonluma difference because with omitting chroma is slower.
-    // YUY2: YUYVYUYV... skip U and V
-    for (int y = 0; y < height; ++y)
-    {
-      for (int x = 0; x < width; x += 4)
-      {
-        dstp[x + 0] = abs(prvp[x + 0] - nxtp[x + 0]);
-        dstp[x + 2] = abs(prvp[x + 2] - nxtp[x + 2]);
-      }
-      prvp += prv_pitch;
-      nxtp += nxt_pitch;
-      dstp += dst_pitch;
-    }
-  }
-  else {
+ {
     for (int y = 0; y < height; ++y)
     {
       for (int x = 0; x < width; x++)
@@ -218,7 +201,7 @@ void buildABSDiffMask_c(const uint8_t* prvp, const uint8_t* nxtp,
 
 template<typename pixel_t>
 void do_buildABSDiffMask(const uint8_t* prvp, const uint8_t* nxtp, uint8_t* tbuffer,
-  int prv_pitch, int nxt_pitch, int tpitch, int width, int height, bool YUY2_LumaOnly, const CPUFeatures *cpuFlags)
+  int prv_pitch, int nxt_pitch, int tpitch, int width, int height, const CPUFeatures *cpuFlags)
 {
   if (cpuFlags->sse2 && width >= 8)
   {
@@ -226,16 +209,7 @@ void do_buildABSDiffMask(const uint8_t* prvp, const uint8_t* nxtp, uint8_t* tbuf
     const int rowsizemod8 = rowsize / 8 * 8;
     // SSE2 is not YUY2 chroma-ignore template, it's quicker if not skipping each YUY2 chroma
     buildABSDiffMask_SSE2<pixel_t>(prvp, nxtp, tbuffer, prv_pitch, nxt_pitch, tpitch, rowsizemod8, height);
-    if(YUY2_LumaOnly)
-      buildABSDiffMask_c<pixel_t, true>(
-        prvp + rowsizemod8, 
-        nxtp + rowsizemod8, 
-        tbuffer + rowsizemod8, 
-        prv_pitch, nxt_pitch, tpitch, 
-        width - rowsizemod8 / sizeof(pixel_t), 
-        height);
-    else
-      buildABSDiffMask_c<pixel_t, false>(
+      buildABSDiffMask_c<pixel_t>(
         prvp + rowsizemod8,
         nxtp + rowsizemod8,
         tbuffer + rowsizemod8,
@@ -244,22 +218,19 @@ void do_buildABSDiffMask(const uint8_t* prvp, const uint8_t* nxtp, uint8_t* tbuf
         height);
   }
   else {
-    if (YUY2_LumaOnly)
-      buildABSDiffMask_c<pixel_t, true>(prvp, nxtp, tbuffer, prv_pitch, nxt_pitch, tpitch, width, height);
-    else
-      buildABSDiffMask_c<pixel_t, false>(prvp, nxtp, tbuffer, prv_pitch, nxt_pitch, tpitch, width, height);
+      buildABSDiffMask_c<pixel_t>(prvp, nxtp, tbuffer, prv_pitch, nxt_pitch, tpitch, width, height);
   }
 }
 // instantiate
 template void do_buildABSDiffMask<uint8_t>(const uint8_t* prvp, const uint8_t* nxtp, uint8_t* tbuffer,
-  int prv_pitch, int nxt_pitch, int tpitch, int width, int height, bool YUY2_LumaOnly, const CPUFeatures *cpuFlags);
+  int prv_pitch, int nxt_pitch, int tpitch, int width, int height, const CPUFeatures *cpuFlags);
 template void do_buildABSDiffMask<uint16_t>(const uint8_t* prvp, const uint8_t* nxtp, uint8_t* tbuffer,
-  int prv_pitch, int nxt_pitch, int tpitch, int width, int height, bool YUY2_LumaOnly, const CPUFeatures *cpuFlags);
+  int prv_pitch, int nxt_pitch, int tpitch, int width, int height, const CPUFeatures *cpuFlags);
 
 
 template<typename pixel_t>
 void do_buildABSDiffMask2(const uint8_t* prvp, const uint8_t* nxtp, uint8_t* dstp,
-  int prv_pitch, int nxt_pitch, int dst_pitch, int width, int height, bool YUY2_LumaOnly, const CPUFeatures *cpuFlags, int bits_per_pixel)
+  int prv_pitch, int nxt_pitch, int dst_pitch, int width, int height, const CPUFeatures *cpuFlags, int bits_per_pixel)
 {
   if (cpuFlags->sse2 && width >= 8) // yes, width and not row_size
   {
@@ -268,31 +239,22 @@ void do_buildABSDiffMask2(const uint8_t* prvp, const uint8_t* nxtp, uint8_t* dst
       buildABSDiffMask2_uint8_SSE2(prvp, nxtp, dstp, prv_pitch, nxt_pitch, dst_pitch, mod8Width, height);
     else
       buildABSDiffMask2_uint16_SSE2(prvp, nxtp, dstp, prv_pitch, nxt_pitch, dst_pitch, mod8Width, height, bits_per_pixel);
-    if (YUY2_LumaOnly)
-      buildABSDiffMask2_c<pixel_t, true>(
-        prvp + mod8Width * sizeof(pixel_t),
-        nxtp + mod8Width * sizeof(pixel_t),
-        dstp + mod8Width,
-        prv_pitch, nxt_pitch, dst_pitch, width - mod8Width, height, bits_per_pixel);
-    else
-      buildABSDiffMask2_c<pixel_t, false>(
+
+    buildABSDiffMask2_c<pixel_t>(
         prvp + mod8Width * sizeof(pixel_t), 
         nxtp + mod8Width * sizeof(pixel_t),
         dstp + mod8Width, // dstp is really 8 bits
         prv_pitch, nxt_pitch, dst_pitch, width - mod8Width, height, bits_per_pixel);
   }
   else {
-    if (YUY2_LumaOnly)
-      buildABSDiffMask2_c<pixel_t, true>(prvp, nxtp, dstp, prv_pitch, nxt_pitch, dst_pitch, width, height, bits_per_pixel);
-    else
-      buildABSDiffMask2_c<pixel_t, false>(prvp, nxtp, dstp, prv_pitch, nxt_pitch, dst_pitch, width, height, bits_per_pixel);
+      buildABSDiffMask2_c<pixel_t>(prvp, nxtp, dstp, prv_pitch, nxt_pitch, dst_pitch, width, height, bits_per_pixel);
   }
 }
 // instantiate
 template void do_buildABSDiffMask2<uint8_t>(const uint8_t* prvp, const uint8_t* nxtp, uint8_t* dstp,
-  int prv_pitch, int nxt_pitch, int dst_pitch, int width, int height, bool YUY2_LumaOnly, const CPUFeatures *cpuFlags, int bits_per_pixel);
+  int prv_pitch, int nxt_pitch, int dst_pitch, int width, int height, const CPUFeatures *cpuFlags, int bits_per_pixel);
 template void do_buildABSDiffMask2<uint16_t>(const uint8_t* prvp, const uint8_t* nxtp, uint8_t* dstp,
-  int prv_pitch, int nxt_pitch, int dst_pitch, int width, int height, bool YUY2_LumaOnly, const CPUFeatures *cpuFlags, int bits_per_pixel);
+  int prv_pitch, int nxt_pitch, int dst_pitch, int width, int height, const CPUFeatures *cpuFlags, int bits_per_pixel);
 
 // Finally this is common for TFM and TDeint, planar and YUY2 (luma, luma+chroma))
 // This C code replaces some thousand line of copy pasted original inline asm lines
@@ -453,64 +415,15 @@ template void AnalyzeDiffMask_Planar<uint16_t, 12>(uint8_t* dstp, int dst_pitch,
 template void AnalyzeDiffMask_Planar<uint16_t, 14>(uint8_t* dstp, int dst_pitch, uint8_t* tbuffer8, int tpitch, int Width, int Height);
 template void AnalyzeDiffMask_Planar<uint16_t, 16>(uint8_t* dstp, int dst_pitch, uint8_t* tbuffer8, int tpitch, int Width, int Height);
 
-// TDeint and TFM version
-void AnalyzeDiffMask_YUY2(uint8_t* dstp, int dst_pitch, uint8_t* tbuffer, int tpitch, int Width, int Height, bool mChroma)
-{
-  // YUY2 we won't touch it if it works. No hbd here
-  const uint8_t* dppp = tbuffer - tpitch;
-  const uint8_t* dpp = tbuffer;
-  const uint8_t* dp = tbuffer + tpitch;
-  const uint8_t* dpn = tbuffer + tpitch * 2;
-  const uint8_t* dpnn = tbuffer + tpitch * 3;
-  // reconstructed from inline 700+ lines asm by pinterf
-
-  if (mChroma) // TFM YUY2's mChroma bool parameter
-  {
-    for (int y = 2; y < Height - 2; y += 2) {
-      // small difference from planar: x starts from 2 instead of 1; ends at width-2 instead of width-1
-      // [YUYV]YUYVYUYVYUYV...YUYV[YUYV]
-      for (int x = 4; x < Width - 4; x += 1)
-      {
-        AnalyzeOnePixel<uint8_t, 8, 2>(dstp, dppp, dpp, dp, dpn, dpnn, x, y, Width, Height);
-        // skip to chroma
-        x++;
-        AnalyzeOnePixel<uint8_t, 8, 4>(dstp, dppp, dpp, dp, dpn, dpnn, x, y, Width, Height);
-
-      }
-      dppp += tpitch;
-      dpp += tpitch;
-      dp += tpitch;
-      dpn += tpitch;
-      dpnn += tpitch;
-      dstp += dst_pitch;
-    }
-  }
-  else {
-    // no YUY2 chroma, LumaOnly
-    for (int y = 2; y < Height - 2; y += 2) {
-      for (int x = 4; x < Width - 4; x += 2)
-      {
-        AnalyzeOnePixel<uint8_t, 8, 2>(dstp, dppp, dpp, dp, dpn, dpnn, x, y, Width, Height);
-      }
-      dppp += tpitch;
-      dpp += tpitch;
-      dp += tpitch;
-      dpn += tpitch;
-      dpnn += tpitch;
-      dstp += dst_pitch;
-    }
-  }
-}
-
 // HBD ready
-template<typename pixel_t, bool YUY2_LumaOnly>
+template<typename pixel_t>
 void buildABSDiffMask2_c(const uint8_t* prvp, const uint8_t* nxtp,
   uint8_t* dstp, int prv_pitch, int nxt_pitch, int dst_pitch, int width, int height, int bits_per_pixel)
 {
   if (width <= 0)
     return;
 
-  constexpr int inc = YUY2_LumaOnly ? 2 : 1;
+  constexpr int inc = 1;
   const int Const19 = 19 << (bits_per_pixel - 8);
   const int Const3 = 3 << (bits_per_pixel - 8);
   for (int y = 0; y < height; ++y)
@@ -762,7 +675,7 @@ void buildABSDiffMask2_uint16_SSE2(const uint8_t* prvp, const uint8_t* nxtp,
   }
 }
 
-template<typename pixel_t, bool YUY2_LumaOnly>
+template<typename pixel_t>
 void check_combing_c(const pixel_t* srcp, uint8_t* cmkp, int width, int height, int src_pitch, int cmk_pitch, int cthresh)
 {
   // cthresh is scaled to actual bit depth
@@ -771,11 +684,7 @@ void check_combing_c(const pixel_t* srcp, uint8_t* cmkp, int width, int height, 
   const pixel_t* srcpn = srcp + src_pitch;
   const pixel_t* srcpnn = srcp + src_pitch * 2;
 
-  int increment;
-  if constexpr (YUY2_LumaOnly)
-    increment = 2;
-  else
-    increment = 1; // planar, YUY2 luma + chroma
+  int increment = 1;
 
   const int cthresh6 = cthresh * 6;
   // no luma masking
@@ -800,22 +709,15 @@ void check_combing_c(const pixel_t* srcp, uint8_t* cmkp, int width, int height, 
   }
 }
 // instantiate
-template void check_combing_c<uint8_t, false>(const uint8_t* srcp, uint8_t* cmkp, int width, int height, int src_pitch, int cmk_pitch, int cthresh);
-template void check_combing_c<uint8_t, true>(const uint8_t* srcp, uint8_t* cmkp, int width, int height, int src_pitch, int cmk_pitch, int cthresh);
-template void check_combing_c<uint16_t, false>(const uint16_t* srcp, uint8_t* cmkp, int width, int height, int src_pitch, int cmk_pitch, int cthresh);
+template void check_combing_c<uint8_t>(const uint8_t* srcp, uint8_t* cmkp, int width, int height, int src_pitch, int cmk_pitch, int cthresh);
+template void check_combing_c<uint16_t>(const uint16_t* srcp, uint8_t* cmkp, int width, int height, int src_pitch, int cmk_pitch, int cthresh);
 
-template<typename pixel_t, bool YUY2_LumaOnly, typename safeint_t>
+template<typename pixel_t, typename safeint_t>
 void check_combing_c_Metric1(const pixel_t* srcp, uint8_t* cmkp, int width, int height, int src_pitch, int cmk_pitch, safeint_t cthreshsq)
 {
   // cthresh is scaled to actual bit depth
   const pixel_t* srcpp = srcp - src_pitch;
   const pixel_t* srcpn = srcp + src_pitch;
-
-  int increment;
-  if constexpr (YUY2_LumaOnly)
-    increment = 2;
-  else
-    increment = 1; // planar, YUY2 luma + chroma
 
   for (int y = 0; y < height; ++y)
   {
@@ -831,13 +733,11 @@ void check_combing_c_Metric1(const pixel_t* srcp, uint8_t* cmkp, int width, int 
   }
 }
 // instantiate
-template void check_combing_c_Metric1<uint8_t, false, int>(const uint8_t* srcp, uint8_t* cmkp, int width, int height, int src_pitch, int cmk_pitch, int cthreshsq);
-template void check_combing_c_Metric1<uint8_t, true, int>(const uint8_t* srcp, uint8_t* cmkp, int width, int height, int src_pitch, int cmk_pitch, int cthreshsq);
-template void check_combing_c_Metric1<uint16_t, false, int64_t>(const uint16_t* srcp, uint8_t* cmkp, int width, int height, int src_pitch, int cmk_pitch, int64_t cthreshsq);
+template void check_combing_c_Metric1<uint8_t, int>(const uint8_t* srcp, uint8_t* cmkp, int width, int height, int src_pitch, int cmk_pitch, int cthreshsq);
+template void check_combing_c_Metric1<uint16_t, int64_t>(const uint16_t* srcp, uint8_t* cmkp, int width, int height, int src_pitch, int cmk_pitch, int64_t cthreshsq);
 
 
 
-template<bool with_luma_mask>
 static void check_combing_SSE2_generic(const uint8_t *srcp, uint8_t *dstp, int width,
   int height, int src_pitch, int dst_pitch, int cthresh)
 {
@@ -859,10 +759,7 @@ static void check_combing_SSE2_generic(const uint8_t *srcp, uint8_t *dstp, int w
       // max(min(p-s,n-s), min(s-n,s-p))
       auto xmm2_max = _mm_max_epu8(_mm_min_epu8(diff_prev_curr, diff_next_curr), _mm_min_epu8(diff_curr_next, diff_curr_prev));
       auto xmm2_cmp = _mm_cmpeq_epi8(_mm_adds_epu8(xmm2_max, threshb), all_ff);
-      if (with_luma_mask) { // YUY2 luma mask
-        __m128i lumaMask = _mm_set1_epi16(0x00FF);
-        xmm2_cmp = _mm_and_si128(xmm2_cmp, lumaMask);
-      }
+
       auto res_part1 = xmm2_cmp;
       bool cmpres_is_allzero;
 #ifdef _M_X64
@@ -932,14 +829,7 @@ static void check_combing_SSE2_generic(const uint8_t *srcp, uint8_t *dstp, int w
 
 void check_combing_SSE2(const uint8_t *srcp, uint8_t *dstp, int width, int height, int src_pitch, int dst_pitch, int cthresh)
 {
-  // no luma masking
-  check_combing_SSE2_generic<false>(srcp, dstp, width, height, src_pitch, dst_pitch, cthresh);
-}
-
-void check_combing_YUY2LumaOnly_SSE2(const uint8_t *srcp, uint8_t *dstp, int width, int height, int src_pitch, int dst_pitch, int cthresh)
-{
-  // with luma masking
-  check_combing_SSE2_generic<true>(srcp, dstp, width, height, src_pitch, dst_pitch, cthresh);
+  check_combing_SSE2_generic(srcp, dstp, width, height, src_pitch, dst_pitch, cthresh);
 }
 
 
