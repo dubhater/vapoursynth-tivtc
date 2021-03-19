@@ -27,7 +27,6 @@
 #define TDECIMATE_H
 
 #include <stdio.h>
-#include <malloc.h>
 #include <math.h>
 #ifndef _WIN32
 #include <limits.h>
@@ -41,6 +40,7 @@
 #endif
 #include <memory>
 #include <vector>
+#include <string>
 #include <unordered_map>
 #include <VapourSynth.h>
 #include <VSHelper.h>
