@@ -24,7 +24,6 @@
 */
 
 #include <stdio.h>
-#include <malloc.h>
 #include <xmmintrin.h>
 #ifndef _WIN32
 #include <limits.h>
@@ -38,6 +37,7 @@
 #endif
 #include <memory>
 #include <vector>
+#include <string>
 #include <VapourSynth.h>
 #include <VSHelper.h>
 #include "calcCRC.h"
