@@ -3,6 +3,7 @@
 
 #include <stdexcept>
 #include <cstring>
+#include <cstdio>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -93,7 +94,7 @@ static FILE *tivtc_fopen(const char *name, const char *mode) {
     } else
         throw TIVTCError("Failed to convert file name to wide char.");
 #else
-    return fopen(name, mode);
+    return std::fopen(name, mode);
 #endif
 }
 
